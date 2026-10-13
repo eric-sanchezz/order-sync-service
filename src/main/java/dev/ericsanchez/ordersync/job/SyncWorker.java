@@ -13,11 +13,13 @@ import java.util.function.BooleanSupplier;
 import dev.ericsanchez.ordersync.config.OrderSyncProperties;
 import dev.ericsanchez.ordersync.erp.ErpClient;
 import dev.ericsanchez.ordersync.erp.ErpResult;
+import dev.ericsanchez.ordersync.observability.SyncMetrics;
 import dev.ericsanchez.ordersync.transform.ErpOrder;
 import dev.ericsanchez.ordersync.transform.OrderTransformer;
 import dev.ericsanchez.ordersync.webhook.ShopOrder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import tools.jackson.databind.json.JsonMapper;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -46,8 +48,11 @@ public class SyncWorker {
 
 	private final OrderSyncProperties properties;
 
+	private final SyncMetrics metrics;
+
 	public SyncWorker(SyncJobRepository jobs, CustomerMappingRepository customers, ErpClient erpClient,
-			BackoffPolicy backoff, JsonMapper jsonMapper, Clock clock, OrderSyncProperties properties) {
+			BackoffPolicy backoff, JsonMapper jsonMapper, Clock clock, OrderSyncProperties properties,
+			SyncMetrics metrics) {
 		this.jobs = jobs;
 		this.customers = customers;
 		this.erpClient = erpClient;
@@ -55,6 +60,7 @@ public class SyncWorker {
 		this.jsonMapper = jsonMapper;
 		this.clock = clock;
 		this.properties = properties;
+		this.metrics = metrics;
 	}
 
 	/** Claims up to {@code batch-size} due jobs and returns once all of them have been processed. */
@@ -74,12 +80,18 @@ public class SyncWorker {
 
 	/** One failing job must not take the rest of the batch down; its lease expires and it is claimed again. */
 	private void processSafely(ClaimedJob job) {
+		// Set here, inside the job's own virtual thread: MDC is per thread.
+		MDC.put("eventId", job.eventId());
+		MDC.put("jobId", String.valueOf(job.id()));
 		try {
 			process(job);
 		}
 		catch (RuntimeException ex) {
 			log.error("Job {} ({}) failed unexpectedly; it will be retried when its lease expires", job.id(),
 					job.eventId(), ex);
+		}
+		finally {
+			MDC.clear();
 		}
 	}
 
@@ -131,21 +143,23 @@ public class SyncWorker {
 			}
 			case ErpResult.Permanent permanent -> {
 				log.warn("Job {} ({}) DEAD: {}", job.id(), job.eventId(), permanent.error());
-				store(job, attempts, "the ERP rejected the order",
-						() -> this.jobs.markDead(job, attempts, permanent.error(), now));
+				countDead(store(job, attempts, "the ERP rejected the order",
+						() -> this.jobs.markDead(job, attempts, permanent.error(), now)));
 			}
 			case ErpResult.Retryable retryable when attempts >= this.properties.retry().maxAttempts() -> {
 				log.warn("Job {} ({}) DEAD after {} attempts: {}", job.id(), job.eventId(), attempts,
 						retryable.error());
-				store(job, attempts, "the ERP call failed",
-						() -> this.jobs.markDead(job, attempts, retryable.error(), now));
+				countDead(store(job, attempts, "the ERP call failed",
+						() -> this.jobs.markDead(job, attempts, retryable.error(), now)));
 			}
 			case ErpResult.Retryable retryable -> {
 				Duration delay = this.backoff.delay(attempts);
 				log.info("Job {} ({}) RETRY in {} ms (attempt {}): {}", job.id(), job.eventId(), delay.toMillis(),
 						attempts, retryable.error());
-				store(job, attempts, "the ERP call failed",
-						() -> this.jobs.markRetry(job, attempts, now.plus(delay), retryable.error(), now));
+				if (store(job, attempts, "the ERP call failed",
+						() -> this.jobs.markRetry(job, attempts, now.plus(delay), retryable.error(), now))) {
+					this.metrics.jobRetried();
+				}
 			}
 			case ErpResult.CircuitOpen open -> {
 				// The ERP was not called, so this does not consume an attempt.
@@ -160,11 +174,19 @@ public class SyncWorker {
 
 	private void finishDead(ClaimedJob job, int attempts, String reason) {
 		log.warn("Job {} ({}) DEAD: {}", job.id(), job.eventId(), reason);
-		store(job, attempts, "the order could not be sent", () -> this.jobs.markDead(job, attempts, reason, now()));
+		countDead(store(job, attempts, "the order could not be sent",
+				() -> this.jobs.markDead(job, attempts, reason, now())));
+	}
+
+	private void countDead(boolean stored) {
+		if (stored) {
+			this.metrics.jobDead();
+		}
 	}
 
 	/**
-	 * Runs the result write. Two kinds of failure are handled differently (see ADR 0002):
+	 * Runs the result write and returns true if it was stored as intended. Two kinds of failure are handled
+	 * differently (see ADR 0002):
 	 * <ul>
 	 * <li>The database rejects the <em>data</em> ({@link DataIntegrityViolationException}). Writing it again would fail
 	 * the same way after every lease expiry, so the job goes DEAD with a fixed message that does not carry the
@@ -174,20 +196,21 @@ public class SyncWorker {
 	 * attempt, and the ERP is called with the same Idempotency-Key, so the order is neither lost nor duplicated.</li>
 	 * </ul>
 	 */
-	private void store(ClaimedJob job, int attempts, String outcome, BooleanSupplier write) {
-		boolean stored;
+	private boolean store(ClaimedJob job, int attempts, String outcome, BooleanSupplier write) {
 		try {
-			stored = write.getAsBoolean();
+			boolean stored = write.getAsBoolean();
+			if (!stored) {
+				logLostLease(job);
+			}
+			return stored;
 		}
 		catch (DataIntegrityViolationException ex) {
 			log.error("Job {} ({}): {} but the result could not be stored; marking it DEAD", job.id(), job.eventId(),
 					outcome, ex);
-			stored = this.jobs.markDead(job, attempts, "result could not be stored (" + outcome + "): "
+			countDead(this.jobs.markDead(job, attempts, "result could not be stored (" + outcome + "): "
 					+ ex.getMostSpecificCause().getClass().getSimpleName()
-					+ ". Check the ERP before replaying this job.", now());
-		}
-		if (!stored) {
-			logLostLease(job);
+					+ ". Check the ERP before replaying this job.", now()));
+			return false;
 		}
 	}
 

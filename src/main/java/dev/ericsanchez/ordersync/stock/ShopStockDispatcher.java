@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.ericsanchez.ordersync.observability.SyncMetrics;
 import dev.ericsanchez.ordersync.outbox.ClaimedMessage;
 import dev.ericsanchez.ordersync.outbox.DeliveryResult;
 import dev.ericsanchez.ordersync.outbox.OutboxDestination;
@@ -47,13 +48,16 @@ public class ShopStockDispatcher implements OutboxDispatcher {
 
 	private final JsonMapper jsonMapper;
 
+	private final SyncMetrics metrics;
+
 	public ShopStockDispatcher(@Qualifier("shopRestClient") RestClient shopRestClient,
 			@Qualifier("shopCircuitBreaker") CircuitBreaker shopCircuitBreaker, OutboxRepository outbox,
-			JsonMapper jsonMapper) {
+			JsonMapper jsonMapper, SyncMetrics metrics) {
 		this.restClient = shopRestClient;
 		this.circuitBreaker = shopCircuitBreaker;
 		this.outbox = outbox;
 		this.jsonMapper = jsonMapper;
+		this.metrics = metrics;
 	}
 
 	/** Body of the shop's stock endpoint. */
@@ -94,9 +98,26 @@ public class ShopStockDispatcher implements OutboxDispatcher {
 		if (this.outbox.hasNewerMessage(message)) {
 			return new DeliveryResult.Superseded("a newer stock message exists for " + change.articleCode());
 		}
+		long start = System.nanoTime();
+		DeliveryResult result = putThroughCircuitBreaker(message.id(), change);
+		this.metrics.recordShopRequest(outcomeTag(result), System.nanoTime() - start);
+		return result;
+	}
+
+	private static String outcomeTag(DeliveryResult result) {
+		return switch (result) {
+			case DeliveryResult.Delivered delivered -> "delivered";
+			case DeliveryResult.Retryable retryable -> "retryable";
+			case DeliveryResult.CircuitOpen open -> "circuit_open";
+			case DeliveryResult.Permanent permanent -> "permanent";
+			case DeliveryResult.Superseded superseded -> "superseded";
+		};
+	}
+
+	private DeliveryResult putThroughCircuitBreaker(long messageId, StockLevelChanged change) {
 		try {
 			return this.circuitBreaker.executeSupplier(() -> {
-				DeliveryResult result = put(message.id(), change);
+				DeliveryResult result = put(messageId, change);
 				if (result instanceof DeliveryResult.Retryable retryable) {
 					throw new RetryableFailure(retryable);
 				}

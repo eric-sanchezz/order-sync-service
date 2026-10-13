@@ -1,6 +1,7 @@
 package dev.ericsanchez.ordersync;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Map;
 
 import com.github.tomakehurst.wiremock.client.WireMock;
@@ -14,7 +15,9 @@ import org.testcontainers.containers.GenericContainer;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
@@ -29,6 +32,8 @@ import org.springframework.web.client.RestClient;
  * one Spring context.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// Spring Boot tests disable metrics export by default; the Prometheus endpoint is part of what is tested here.
+@AutoConfigureMetrics
 @ActiveProfiles("test")
 @Import(TestcontainersConfiguration.class)
 public abstract class IntegrationTest {
@@ -44,6 +49,9 @@ public abstract class IntegrationTest {
 
 	@LocalServerPort
 	private int port;
+
+	@LocalManagementPort
+	private int managementPort;
 
 	@Autowired
 	@Qualifier("erpMockContainer")
@@ -74,6 +82,9 @@ public abstract class IntegrationTest {
 	/** Client for the app. Never throws on 4xx/5xx, so tests can assert on the status. */
 	protected RestClient http;
 
+	/** Client for the management port (actuator). Never throws on 4xx/5xx. */
+	protected RestClient actuator;
+
 	@BeforeEach
 	void resetSharedState() {
 		this.jdbc.sql("TRUNCATE sync_job, inbox_event, outbox_message, erp_inbox_event, stock_level RESTART IDENTITY")
@@ -91,6 +102,11 @@ public abstract class IntegrationTest {
 		this.circuitBreakers.getAllCircuitBreakers().forEach(CircuitBreaker::reset);
 		this.http = RestClient.builder()
 			.baseUrl("http://localhost:" + this.port)
+			.defaultStatusHandler((status) -> true, (request, response) -> {
+			})
+			.build();
+		this.actuator = RestClient.builder()
+			.baseUrl("http://localhost:" + this.managementPort)
 			.defaultStatusHandler((status) -> true, (request, response) -> {
 			})
 			.build();
@@ -120,6 +136,19 @@ public abstract class IntegrationTest {
 			.body(bytes)
 			.retrieve()
 			.toEntity(String.class);
+	}
+
+	/**
+	 * Sum of the samples of {@code name} in /actuator/prometheus whose labels include all of {@code labels} (each
+	 * written as in the exposition format, e.g. {@code outcome="success"}). 0 if there is none.
+	 */
+	protected double metric(String name, String... labels) {
+		String scrape = this.actuator.get().uri("/actuator/prometheus").retrieve().body(String.class);
+		return scrape.lines()
+			.filter((line) -> line.startsWith(name + "{") || line.startsWith(name + " "))
+			.filter((line) -> Arrays.stream(labels).allMatch(line::contains))
+			.mapToDouble((line) -> Double.parseDouble(line.substring(line.lastIndexOf(' ') + 1)))
+			.sum();
 	}
 
 	protected Map<String, Object> outboxRow(long messageId) {

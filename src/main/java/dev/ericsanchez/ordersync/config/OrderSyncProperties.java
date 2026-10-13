@@ -29,7 +29,8 @@ public record OrderSyncProperties(
 		@Valid @NotNull ErpWebhook erpWebhook,
 		@Valid @NotNull Shop shop,
 		@Valid @NotNull Outbox outbox,
-		@Valid @NotNull Stock stock) {
+		@Valid @NotNull Stock stock,
+		@Valid @NotNull Metrics metrics) {
 
 	public record Webhook(@NotBlank String secret) {
 	}
@@ -83,6 +84,13 @@ public record OrderSyncProperties(
 
 	/** How far ahead of our clock an ERP stock change may be stamped (clock skew) before it is rejected. */
 	public record Stock(@NotNull Duration maxClockSkew) {
+	}
+
+	/**
+	 * The database gauges are refreshed in the background every {@code dbRefreshInterval}; each refresh may wait at
+	 * most {@code dbQueryTimeout} for its connection and for its query.
+	 */
+	public record Metrics(@NotNull Duration dbRefreshInterval, @NotNull Duration dbQueryTimeout) {
 	}
 
 	public record Outbox(boolean relayEnabled, @NotNull Duration pollInterval, @Min(1) int batchSize,

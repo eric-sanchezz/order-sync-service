@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import dev.ericsanchez.ordersync.observability.SyncMetrics;
 import dev.ericsanchez.ordersync.transform.ErpOrder;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -39,11 +40,15 @@ public class ErpClient {
 
 	private final JsonMapper jsonMapper;
 
+	private final SyncMetrics metrics;
+
 	public ErpClient(@Qualifier("erpRestClient") RestClient erpRestClient,
-			@Qualifier("erpCircuitBreaker") CircuitBreaker erpCircuitBreaker, JsonMapper jsonMapper) {
+			@Qualifier("erpCircuitBreaker") CircuitBreaker erpCircuitBreaker, JsonMapper jsonMapper,
+			SyncMetrics metrics) {
 		this.restClient = erpRestClient;
 		this.circuitBreaker = erpCircuitBreaker;
 		this.jsonMapper = jsonMapper;
+		this.metrics = metrics;
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
@@ -67,7 +72,24 @@ public class ErpClient {
 		return throwable instanceof RetryableFailure;
 	}
 
+	/** Every call is timed as {@code ordersync.erp.requests}, tagged with its outcome. */
 	public ErpResult createSalesOrder(String correlationId, ErpOrder order) {
+		long start = System.nanoTime();
+		ErpResult result = callThroughCircuitBreaker(correlationId, order);
+		this.metrics.recordErpRequest(outcomeTag(result), System.nanoTime() - start);
+		return result;
+	}
+
+	private static String outcomeTag(ErpResult result) {
+		return switch (result) {
+			case ErpResult.Success success -> "success";
+			case ErpResult.Retryable retryable -> "retryable";
+			case ErpResult.Permanent permanent -> "permanent";
+			case ErpResult.CircuitOpen open -> "circuit_open";
+		};
+	}
+
+	private ErpResult callThroughCircuitBreaker(String correlationId, ErpOrder order) {
 		try {
 			return this.circuitBreaker.executeSupplier(() -> {
 				ErpResult result = post(correlationId, order);

@@ -16,6 +16,7 @@ import dev.ericsanchez.ordersync.config.OrderSyncProperties;
 import dev.ericsanchez.ordersync.job.BackoffPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
@@ -71,12 +72,18 @@ public class OutboxRelay {
 
 	/** One failing message must not take the rest of the batch down; its lease expires and it is claimed again. */
 	private void processSafely(ClaimedMessage message) {
+		// Set here, inside the message's own virtual thread: MDC is per thread.
+		MDC.put("outboxId", String.valueOf(message.id()));
+		MDC.put("aggregateId", message.aggregateId());
 		try {
 			process(message);
 		}
 		catch (RuntimeException ex) {
 			log.error("Outbox message {} ({} {}) failed unexpectedly; it will be retried when its lease expires",
 					message.id(), message.destination(), message.aggregateId(), ex);
+		}
+		finally {
+			MDC.clear();
 		}
 	}
 
