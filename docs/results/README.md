@@ -57,7 +57,27 @@ All on Windows 11 Home + Docker Desktop 4.95 (16 CPUs), one app instance, k6 v2.
 | [20261013T215628Z](20261013T215628Z-resilience/resilience.md) | 60-120 s | 1711 / 1711 | 0 | 0 | 0 | 1733 (1.013) | 22 / 0 | 1159 | 22 | 6 ms | 45551 / 85685 / 119000 ms |
 | [20261013T220039Z](20261013T220039Z-resilience/resilience.md) (baseline, in the README) | none | 1711 / 1711 | 0 | 0 | 0 | 1711 (1) | 0 / 0 | 0 | 0 | 6.3 ms | 1332 / 2202 / 2558 ms |
 
-The runs used `resilience-run.sh`, `analyze.sql` and `orders.js` exactly as published here (the environment files
-say `c82f940 (with uncommitted changes)` because H4 was not committed yet). No run was invalid. Three earlier runs,
+The runs used `resilience-run.sh`, `analyze.sql` and `orders.js` exactly as published here. The environment files
+say `c82f940 (with uncommitted changes)` because the run was measured before those files were committed. No run was
+invalid. Three earlier runs,
 made with a previous version of the analysis whose definitions of lost and duplicated were weaker, were deleted and
 are not counted, as were the short runs used to test the script.
+
+## Measured with
+
+The three files that produced these numbers were committed in `2631f54` (the script and the analysis) and `5b5f673`
+(the k6 scenario), unchanged since the runs:
+
+| File | sha1 |
+|---|---|
+| `scripts/resilience-run.sh` | `d052e29cd6b6dc9339157057b794cf9a5bdb76ca` |
+| `scripts/resilience/analyze.sql` | `1b842253effb6243e51e62ccdb7b61b6a4b7403a` |
+| `load/k6/orders.js` | `a885a382ede1f6f03d0563dbdd1371f5d0edd508` |
+
+Check it from the repository root:
+
+```bash
+sha1sum scripts/resilience-run.sh scripts/resilience/analyze.sql load/k6/orders.js
+```
+
+If a later commit changes any of them, these numbers no longer describe it: rerun and publish new results.
