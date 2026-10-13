@@ -1,0 +1,11 @@
+date_utc=20261013T220039Z
+git_commit=c82f940 (with uncommitted changes)
+host_os=Microsoft Windows 11 Home 10.0.26200
+host_cpus=16
+docker=Docker Desktop 4.95.0 (242831), engine 29.8.2 (linux/amd64)
+docker_vm=Docker Desktop, 16 CPUs, 16284270592 bytes of memory
+k6=k6 v2.3.0 (commit/e088784614, go1.27.1, linux/amd64)
+app_instances=1
+command=RATE=10 DURATION=180 CHAOS_START=60 CHAOS_DURATION=0 DRAIN_TIMEOUT=600 MIN_CHAOS_503=5 ./scripts/resilience-run.sh
+app_overrides=CB_WAIT_OPEN=10s CIRCUIT_OPEN_DELAY=5s (everything else: defaults of application.properties)
+erp_mock=WireMock 3.13.1, one priority-2 stub answering 201 after uniform 50-800 ms; chaos = priority-1 stub answering 503

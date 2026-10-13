@@ -113,6 +113,8 @@ The ERP mock cycles through `503, 201, 201` with 50-800 ms of latency on each ca
 
 ## Try it
 
+On a fresh stack (`docker compose down -v` first if it has already run; the job ids below assume an empty database):
+
 ```bash
 # A valid order (customer 42). The first ERP call gets a 503, so the job goes through RETRY before DONE.
 ./scripts/send-order.sh scripts/sample-order.json demo-1
@@ -219,6 +221,74 @@ mock itself. Around 18:37 the ERP mock failed for a few minutes: the `erp` break
   `aggregateId` in the relay. `docker compose logs app` shows them; locally and in tests the logs stay plain text.
 
 See [ADR 0005](docs/adr/0005-observability.md) for the reasoning.
+
+## Resilience under failure
+
+A load test with an ERP outage in the middle. k6 posts 10 signed orders per second for 180 s (every 20th request
+redelivers an earlier event instead). 60 s after the first request, a WireMock stub makes the ERP answer 503 to every
+order for 60 s. The script then waits until the queue is empty and checks each order against the data (k6's output,
+the `sync_job` table and the ERP mock's request journal, not the app's counters):
+
+- **Lost**: the webhook answered 202, but the ERP never answered a 2xx to the order's `Idempotency-Key`, whatever
+  the job says, or the order has no job.
+- **Duplicated**: more than one job for the order, more than one 2xx from the ERP for its key, a key in the ERP that
+  matches no order sent, or the same key sent with different payloads.
+
+A run only counts if the outage shows in the journal (at least 5 ERP 503s while the stub was in, none outside it)
+and caused retries or refused calls; otherwise the script marks it INVALID.
+
+I ran it 3 times with the outage and once without it (baseline), all with the same load. All 4 had 0 lost,
+0 duplicated and 0 `DEAD`. The table shows the worst outage run (the highest end-to-end p95, the criterion fixed
+before running) next to the baseline. Raw data:
+[outage](docs/results/20261013T215214Z-resilience/) and [baseline](docs/results/20261013T220039Z-resilience/); every
+run and the method are in [docs/results](docs/results/README.md).
+
+| Figure | ERP down 60 s (worst of 3) | Baseline, no outage |
+|---|---|---|
+| Orders sent by k6 / accepted (202) | 1711 / 1711 | 1711 / 1711 |
+| **Lost** | **0** | **0** |
+| **Duplicated** | **0** | **0** |
+| ... orders with more than one job | 0 | 0 |
+| ... keys the ERP answered 2xx more than once | 0 | 0 |
+| ... ERP keys matching no order sent | 0 | 0 |
+| ... keys sent with different payloads | 0 | 0 |
+| Jobs `DEAD` | 0 | 0 |
+| Requests to the ERP / per accepted order | 1732 / 1.013 | 1711 / 1 |
+| ... answered 503 | 21 | 0 |
+| Calls the circuit breaker refused (never sent; app metric) | 1158 | 0 |
+| Most ERP calls used by one order | 2 (of 5 allowed) | 1 |
+| Ingest latency p95 / max (webhook -> 202, k6) | 6 ms / 35.6 ms | 6.3 ms / 94.8 ms |
+| End to end p50 / p95 / max (accepted -> `DONE`) | 46598 / 86498 / 119786 ms | 1332 / 2202 / 2558 ms |
+| k6 failed requests / checks passed | 0% / 100% | 0% / 100% |
+
+What the figures say:
+- The outage cost 21 real calls to the ERP. After a few 503s the breaker opened and refused 1158 calls without
+  sending them and without using up the orders' attempts; every 10 s it let one test call through. So no order
+  ran out of attempts and none ended `DEAD`.
+- The webhook kept answering 202 in a few milliseconds throughout: the shop never noticed the outage.
+- End-to-end latency is the honest cost: a p95 of 86 s against 2.2 s without the outage. No order is created in
+  the ERP during the outage, and afterwards one instance drains about 11 orders/s while 10/s keep arriving: with the
+  default settings the worker sends a batch of 20 calls in parallel, waits for the slowest one (up to 800 ms) and
+  polls again 1 s later, so 20 / 1.8 s. The queue was empty about 107 s after the ERP came back (`run.log`).
+- The mock's outage is clean 503s. A timeout after the ERP has already created the order is the case the
+  `Idempotency-Key` exists for, and this mock does not simulate it.
+
+Environment: Windows 11 Home with Docker Desktop 4.95 (16 CPUs), one instance of the app, k6 v2.3.0
+(`grafana/k6:2.3.0`), WireMock 3.13.1. For the run, the app uses `CB_WAIT_OPEN=10s` and `CIRCUIT_OPEN_DELAY=5s`
+(30 s by default) so the queue recovers within a three-minute test; everything else is the default configuration.
+The ERP mock answers 201 after 50-800 ms through a dedicated stub, because WireMock's stateful `503, 201, 201`
+scenario of the demo answers 404 to concurrent calls. The script removes its stubs at the end, so the demo behaves as
+in "Try it" again.
+
+To reproduce (tested on Windows 11 with Git Bash and Docker Desktop; needs Docker and curl):
+
+```bash
+docker compose up --build -d
+./scripts/resilience-run.sh                     # about 5 minutes; writes docs/results/<UTC timestamp>-resilience/
+CHAOS_DURATION=0 ./scripts/resilience-run.sh    # the baseline: same load, no outage
+```
+
+k6 lives in the compose profile `load`, so a plain `docker compose up` never starts the load.
 
 ## What n8n gives you for free vs. what this code does
 

@@ -1,0 +1,8 @@
+22:00:39 run 20261013T220039Z: 10 orders/s for 180s, baseline (no ERP outage)
+22:00:47 stack up (app with CB_WAIT_OPEN=10s, CIRCUIT_OPEN_DELAY=5s)
+22:00:47 ERP mock: 201 stub a8977246-1faf-4eae-98a4-64e5b81645d1, journal reset
+22:00:47 k6 starts
+22:03:49 k6 finished (exit code 0; 99 means a threshold failed)
+22:03:49 waiting for the queue to drain (up to 600s)
+22:03:51 queue drained
+22:03:56 results in docs/results/20261013T220039Z-resilience/resilience.md

@@ -1,0 +1,11 @@
+21:56:28 run 20261013T215628Z: 10 orders/s for 180s, ERP down 60s after the first request for 60s
+21:56:35 stack up (app with CB_WAIT_OPEN=10s, CIRCUIT_OPEN_DELAY=5s)
+21:56:36 ERP mock: 201 stub 37361480-6721-4137-9748-fc0c57c37c7d, journal reset
+21:56:36 k6 starts
+21:56:37 k6 first request
+21:57:37 chaos ON (stub b0d0354c-2f1e-40df-89c1-d158baed404a)
+21:58:37 chaos OFF (stub b0d0354c-2f1e-40df-89c1-d158baed404a deleted)
+21:59:38 k6 finished (exit code 0; 99 means a threshold failed)
+21:59:38 waiting for the queue to drain (up to 600s)
+22:00:22 queue drained
+22:00:27 results in docs/results/20261013T215628Z-resilience/resilience.md
