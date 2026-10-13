@@ -1,0 +1,15 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "PUT",
+        "urlPathPattern": "/wp-json/wc/v3/products/by-sku/[^/]+/stock"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"sku\":\"{{request.pathSegments.[5]}}\",\"stock_quantity\":{{jsonPath request.body '$.stock_quantity'}} }"
+      }
+    }
+  ]
+}

@@ -1,13 +1,14 @@
 package dev.ericsanchez.ordersync.config;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-/** Scheduling is off when the worker is disabled (tests call {@code SyncWorker.pollOnce()} directly). */
+/**
+ * Turns scheduling on. Each poller ({@code SyncJobScheduler}, {@code OutboxRelayScheduler}) has its own on/off
+ * property; with both off (as in tests, which call {@code pollOnce()} directly) nothing is scheduled.
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
-@ConditionalOnBooleanProperty(name = "ordersync.worker.enabled", matchIfMissing = true)
 public class SchedulingConfig {
 
 }

@@ -34,7 +34,8 @@ class OrderSyncFlowTest extends IntegrationTest {
 	@Autowired
 	private JsonMapper json;
 
-	// Breaks if: the Idempotency-Key header is dropped, or unitPriceCents/lineAmountCents are mapped wrongly.
+	// Breaks if: the Idempotency-Key (derived from the shop order) or the correlation id is dropped, or
+	// unitPriceCents/lineAmountCents are mapped wrongly.
 	@Test
 	void validOrderReachesTheErpAndEndsDone() {
 		this.erp.register(post(urlEqualTo(SALES_ORDERS)).willReturn(aResponse().withStatus(201)
@@ -51,7 +52,8 @@ class OrderSyncFlowTest extends IntegrationTest {
 		});
 		assertThat(jobRow(jobId).get("completed_at")).isNotNull();
 		this.erp.verifyThat(1, postRequestedFor(urlEqualTo(SALES_ORDERS))
-			.withHeader("Idempotency-Key", equalTo("evt-t1"))
+			.withHeader("Idempotency-Key", equalTo("SHOP-1001"))
+			.withHeader("X-Correlation-Id", equalTo("evt-t1"))
 			.withRequestBody(equalToJson("""
 					{ "customerCode": "CLI-0042", "externalReference": "SHOP-1001", "currency": "EUR",
 					  "totalAmountCents": 15000,

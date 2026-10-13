@@ -1,4 +1,4 @@
-# Demo stack: the service, Postgres and a WireMock "unstable ERP".
+# Demo stack: the service, Postgres, a WireMock "unstable ERP" and a WireMock shop (stock API).
 # Secrets here are demo values (dev-*); real deployments pass their own.
 services:
   postgres:
@@ -23,6 +23,14 @@ services:
     volumes:
       - ./erp-mock:/home/wiremock
 
+  shop-mock:
+    image: wiremock/wiremock:3.13.1
+    command: ["--global-response-templating", "--disable-banner"]
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./shop-mock:/home/wiremock
+
   app:
     build: .
     ports:
@@ -34,8 +42,13 @@ services:
       ERP_BASE_URL: http://erp-mock:8080
       SHOP_WEBHOOK_SECRET: dev-webhook-secret
       ADMIN_API_KEY: dev-admin-key
+      ERP_WEBHOOK_SECRET: dev-erp-webhook-secret
+      SHOP_BASE_URL: http://shop-mock:8080
+      SHOP_API_TOKEN: dev-shop-token
     depends_on:
       postgres:
         condition: service_healthy
       erp-mock:
+        condition: service_started
+      shop-mock:
         condition: service_started

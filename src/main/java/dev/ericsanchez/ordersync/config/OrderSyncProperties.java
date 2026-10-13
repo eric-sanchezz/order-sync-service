@@ -2,7 +2,9 @@ package dev.ericsanchez.ordersync.config;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.function.Predicate;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -23,7 +25,11 @@ public record OrderSyncProperties(
 		@Valid @NotNull Admin admin,
 		@Valid @NotNull Erp erp,
 		@Valid @NotNull Worker worker,
-		@Valid @NotNull Retry retry) {
+		@Valid @NotNull Retry retry,
+		@Valid @NotNull ErpWebhook erpWebhook,
+		@Valid @NotNull Shop shop,
+		@Valid @NotNull Outbox outbox,
+		@Valid @NotNull Stock stock) {
 
 	public record Webhook(@NotBlank String secret) {
 	}
@@ -40,6 +46,20 @@ public record OrderSyncProperties(
 			@Min(1) @Max(100) int failureRateThreshold,
 			@NotNull Duration waitDurationInOpenState,
 			@Min(1) int permittedCallsInHalfOpenState) {
+
+		/** Only exceptions matching {@code recordedFailure} count as failures; anything else counts as a success. */
+		public CircuitBreakerConfig toConfig(Predicate<Throwable> recordedFailure) {
+			return CircuitBreakerConfig.custom()
+				.slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+				.slidingWindowSize(this.slidingWindowSize)
+				.minimumNumberOfCalls(this.minimumNumberOfCalls)
+				.failureRateThreshold(this.failureRateThreshold)
+				.waitDurationInOpenState(this.waitDurationInOpenState)
+				.permittedNumberOfCallsInHalfOpenState(this.permittedCallsInHalfOpenState)
+				.recordException(recordedFailure)
+				.build();
+		}
+
 	}
 
 	public record Worker(boolean enabled, @NotNull Duration pollInterval, @Min(1) int batchSize, @NotNull Duration lease) {
@@ -51,6 +71,22 @@ public record OrderSyncProperties(
 			@NotNull Duration maxDelay,
 			boolean jitter,
 			@NotNull Duration circuitOpenDelay) {
+	}
+
+	/** HMAC secret of the ERP's stock webhook (not the shop's). */
+	public record ErpWebhook(@NotBlank String secret) {
+	}
+
+	public record Shop(@NotNull URI baseUrl, @NotNull Duration timeout, @NotBlank String apiToken,
+			@Valid @NotNull CircuitBreaker circuitBreaker) {
+	}
+
+	/** How far ahead of our clock an ERP stock change may be stamped (clock skew) before it is rejected. */
+	public record Stock(@NotNull Duration maxClockSkew) {
+	}
+
+	public record Outbox(boolean relayEnabled, @NotNull Duration pollInterval, @Min(1) int batchSize,
+			@NotNull Duration lease) {
 	}
 
 }

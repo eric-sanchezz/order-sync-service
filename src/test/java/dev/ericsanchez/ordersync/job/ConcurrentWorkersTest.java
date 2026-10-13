@@ -27,8 +27,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 class ConcurrentWorkersTest extends IntegrationTest {
 
-	private static final String ORDER = """
-			{ "id": 1001, "number": "1001", "currency": "EUR", "total": "12.50",
+	/** One order per job: orders are deduplicated by their shop id, so each event needs its own. */
+	private static final String ORDER_TEMPLATE = """
+			{ "id": %d, "currency": "EUR", "total": "12.50",
 			  "customer": { "id": 42 },
 			  "line_items": [ { "sku": "TORN-M6-100", "name": "Tornillo", "quantity": 1, "price": "12.50" } ] }
 			""";
@@ -42,8 +43,8 @@ class ConcurrentWorkersTest extends IntegrationTest {
 	void twoWorkersPollingAtOnceNeverSendTheSameOrderTwice() throws Exception {
 		this.erp.register(post(urlEqualTo(SALES_ORDERS))
 			.willReturn(aResponse().withStatus(201).withBody("{\"orderId\":\"ERP-8\"}")));
-		List<String> eventIds = IntStream.rangeClosed(1, 20).mapToObj((i) -> "evt-t8-" + i).toList();
-		eventIds.forEach((eventId) -> postSignedOrder(eventId, ORDER));
+		IntStream.rangeClosed(1, 20).forEach((i) -> postSignedOrder("evt-t8-" + i, ORDER_TEMPLATE.formatted(i)));
+		List<String> idempotencyKeys = IntStream.rangeClosed(1, 20).mapToObj((i) -> "SHOP-" + i).toList();
 
 		List<Future<?>> polls = new CopyOnWriteArrayList<>();
 		try (ExecutorService workers = Executors.newFixedThreadPool(2)) {
@@ -69,8 +70,8 @@ class ConcurrentWorkersTest extends IntegrationTest {
 		List<LoggedRequest> requests = this.erp.find(postRequestedFor(urlEqualTo(SALES_ORDERS)));
 		assertThat(requests.stream()
 			.collect(Collectors.groupingBy((request) -> request.getHeader("Idempotency-Key"), Collectors.counting())))
-			.containsOnlyKeys(eventIds)
-			.allSatisfy((eventId, calls) -> assertThat(calls).as(eventId).isOne());
+			.containsOnlyKeys(idempotencyKeys)
+			.allSatisfy((key, calls) -> assertThat(calls).as(key).isOne());
 	}
 
 	private Void awaitAndPoll(CountDownLatch start) throws InterruptedException {

@@ -28,12 +28,6 @@ public class AdminJobService {
 		this.clock = clock;
 	}
 
-	public enum ReplayOutcome {
-
-		REPLAYED, NOT_DEAD, NOT_FOUND
-
-	}
-
 	public JobPage list(JobStatus status, int page, int size) {
 		PageRequest request = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
 		Page<SyncJob> result = (status != null) ? this.jobs.findByStatus(status, request)

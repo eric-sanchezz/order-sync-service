@@ -5,6 +5,7 @@ import java.util.Map;
 
 import com.github.tomakehurst.wiremock.client.WireMock;
 import dev.ericsanchez.ordersync.job.SyncWorker;
+import dev.ericsanchez.ordersync.outbox.OutboxRelay;
 import dev.ericsanchez.ordersync.webhook.HmacVerifier;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.containers.GenericContainer;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
@@ -22,7 +24,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
 /**
- * Shared infrastructure only: the running app on a random port, real Postgres, the WireMock ERP, and a clean slate
+ * Shared infrastructure only: the running app on a random port, real Postgres, the WireMock ERP and shop, and a clean slate
  * before every test (data tables truncated, WireMock reset, every circuit breaker closed). All test classes share
  * one Spring context.
  */
@@ -36,13 +38,20 @@ public abstract class IntegrationTest {
 
 	protected static final String ADMIN_KEY = "test-admin-key";
 
+	protected static final String ERP_WEBHOOK_SECRET = "test-erp-webhook-secret";
+
 	protected static final String SALES_ORDERS = "/api/v1/sales-orders";
 
 	@LocalServerPort
 	private int port;
 
 	@Autowired
+	@Qualifier("erpMockContainer")
 	private GenericContainer<?> erpMockContainer;
+
+	@Autowired
+	@Qualifier("shopMockContainer")
+	private GenericContainer<?> shopMockContainer;
 
 	@Autowired
 	private CircuitBreakerRegistry circuitBreakers;
@@ -53,20 +62,32 @@ public abstract class IntegrationTest {
 	@Autowired
 	protected SyncWorker worker;
 
+	@Autowired
+	protected OutboxRelay relay;
+
 	/** Client for the WireMock ERP: stubs and the request journal. */
 	protected WireMock erp;
+
+	/** Client for the WireMock shop (stock API): stubs and the request journal. */
+	protected WireMock shop;
 
 	/** Client for the app. Never throws on 4xx/5xx, so tests can assert on the status. */
 	protected RestClient http;
 
 	@BeforeEach
 	void resetSharedState() {
-		this.jdbc.sql("TRUNCATE sync_job, inbox_event RESTART IDENTITY").update();
+		this.jdbc.sql("TRUNCATE sync_job, inbox_event, outbox_message, erp_inbox_event, stock_level RESTART IDENTITY")
+			.update();
 		this.erp = new WireMock(this.erpMockContainer.getHost(),
 				this.erpMockContainer.getMappedPort(TestcontainersConfiguration.WIREMOCK_PORT));
 		this.erp.resetMappings();
 		this.erp.resetRequests();
 		this.erp.resetScenarios();
+		this.shop = new WireMock(this.shopMockContainer.getHost(),
+				this.shopMockContainer.getMappedPort(TestcontainersConfiguration.WIREMOCK_PORT));
+		this.shop.resetMappings();
+		this.shop.resetRequests();
+		this.shop.resetScenarios();
 		this.circuitBreakers.getAllCircuitBreakers().forEach(CircuitBreaker::reset);
 		this.http = RestClient.builder()
 			.baseUrl("http://localhost:" + this.port)
@@ -86,6 +107,26 @@ public abstract class IntegrationTest {
 			.body(bytes)
 			.retrieve()
 			.toEntity(String.class);
+	}
+
+	/** Signs {@code body} with the ERP's test secret and posts it to the stock webhook. */
+	protected ResponseEntity<String> postSignedStockUpdate(String eventId, String body) {
+		byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+		return this.http.post()
+			.uri("/webhooks/erp/stock")
+			.contentType(MediaType.APPLICATION_JSON)
+			.header("X-Erp-Event-Id", eventId)
+			.header("X-Erp-Signature", new HmacVerifier(ERP_WEBHOOK_SECRET).sign(bytes))
+			.body(bytes)
+			.retrieve()
+			.toEntity(String.class);
+	}
+
+	protected Map<String, Object> outboxRow(long messageId) {
+		return this.jdbc.sql("SELECT status, attempts, last_error, delivered_at FROM outbox_message WHERE id = :id")
+			.param("id", messageId)
+			.query()
+			.singleRow();
 	}
 
 	protected Map<String, Object> jobRow(long jobId) {
