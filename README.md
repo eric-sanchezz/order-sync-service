@@ -101,8 +101,8 @@ checks. The only business rule is that the sum of the lines must equal the order
 
 ## Run it
 
-You need Docker. One command starts Postgres, the service, a WireMock "unstable ERP" (port 8089) and a WireMock shop
-stock API (port 8090, always answers 200):
+You need Docker. One command starts Postgres, the service, a WireMock "unstable ERP" (port 8089), a WireMock shop
+stock API (port 8090, always answers 200), Prometheus (port 9090) and Grafana (port 3000):
 
 ```bash
 docker compose up --build -d
@@ -175,9 +175,50 @@ The `dev-*` secrets in `docker-compose.yml` are demo values. Configuration comes
 | `SHOP_TIMEOUT` | `5s` | Connect and read timeout per shop call |
 | `OUTBOX_RELAY_ENABLED`, `OUTBOX_POLL_INTERVAL`, `OUTBOX_BATCH_SIZE` | `true`, `1s`, `20` | Outbox relay |
 | `STOCK_MAX_CLOCK_SKEW` | `5m` | How far ahead of our clock a stock change may be stamped |
+| `MANAGEMENT_PORT` | `8081` | Actuator port (health, Prometheus scrape) |
+| `METRICS_DB_REFRESH_INTERVAL`, `METRICS_DB_QUERY_TIMEOUT` | `15s`, `2s` | Background refresh of the database gauges |
+| `LOGGING_STRUCTURED_FORMAT_CONSOLE` | (plain text) | `ecs` for JSON logs (set in docker-compose) |
 
 Retries, backoff and `CB_WAIT_OPEN` apply to both directions. The service refuses to start if a secret, the API key
 or the shop token is blank.
+
+## Observability
+
+Open <http://localhost:3000> (anonymous read-only access). The provisioned dashboard **order-sync-service** shows:
+jobs by status, orders synced per second, ERP latency p50/p95, retries per second, the state of the `erp` and `shop`
+circuit breakers, the age of the oldest pending job, outbox messages by status, webhooks by result, and how fresh the
+database numbers are.
+
+![Grafana dashboard of order-sync-service after about 20 minutes of demo traffic](docs/images/grafana-dashboard.png)
+
+*A real run: about 80 orders and about 10 stock updates. 7 orders ended `DEAD`: 6 on purpose (a customer the ERP
+doesn't know) and 1 because the stateful ERP mock answers 404 "not matched" to concurrent calls, a limitation of the
+mock itself. Around 18:37 the ERP mock failed for a few minutes: the `erp` breaker opened, orders waited in `RETRY`
+(the "oldest pending job" peak), and all of them reached `DONE` once it answered again.*
+
+- **Metrics** (Micrometer, scraped by Prometheus every 5 s):
+  - `ordersync_jobs{status}`, `ordersync_outbox_messages{status}` and `ordersync_jobs_oldest_pending_age_seconds`
+    are gauges read **from Postgres**. The queue lives there, so they are exact, survive restarts, and agree across
+    instances. They are refreshed in the background every 15 s, with one query on a separate connection and a 2 s
+    timeout, so a scrape never touches the database and stays fast even while it is down.
+    `ordersync_db_snapshot_age_seconds` says how old those numbers are.
+  - Counters and timers: `ordersync_erp_requests_seconds{outcome}` and `ordersync_shop_requests_seconds{outcome}`
+    (with histograms for percentiles), `ordersync_jobs_retries_total`, `ordersync_jobs_dead_total` and
+    `ordersync_webhook_received_total{source,result}`.
+  - `resilience4j_circuitbreaker_state{name,state}` for both breakers.
+- **Health**: the `erp` and `shop` components report the state of their circuit breaker. Any state other than
+  `CLOSED` is `DEGRADED`, which still answers 200. An ERP outage is not an outage of this service, which keeps
+  accepting and queueing work. Liveness (used by the Docker healthcheck) only checks that the process answers, so a
+  dead ERP never gets the container restarted. Readiness checks the database.
+- **Where**: the actuator is on its own **management port, 8081**. It only serves `/actuator/health/**` and
+  `/actuator/prometheus`, and docker-compose does not publish it: Prometheus reaches it inside the compose network.
+  The application port (8080) has no actuator at all. In production the same split keeps metrics and health off the
+  public interface.
+- **Logs**: in docker-compose they are JSON (Spring Boot's built-in ECS format). Each line carries the correlation
+  fields of what it is about: `eventId` in the webhooks, `eventId` and `jobId` in the worker, `outboxId` and
+  `aggregateId` in the relay. `docker compose logs app` shows them; locally and in tests the logs stay plain text.
+
+See [ADR 0005](docs/adr/0005-observability.md) for the reasoning.
 
 ## What n8n gives you for free vs. what this code does
 
@@ -193,6 +234,7 @@ or the shop token is blank.
 | Failed orders | Error workflow / execution list | `DEAD` jobs with the reason, admin API to inspect and replay |
 | Field mapping | Set / Code nodes | A pure, unit-tested transformer; money in `long` cents with overflow checks |
 | Save a change and notify another system | Two nodes in a row: if the second fails, the first has already happened | Transactional outbox: the stock level and the message to the shop are stored in one transaction, then a relay delivers them with retries |
+| Seeing what is going on | Execution list per workflow | Prometheus metrics from the database (queue by status, oldest pending job), latency histograms, circuit breaker state, a provisioned Grafana dashboard, JSON logs with correlation ids |
 | Updates arriving out of order | The last execution wins, even if its data is older | `changedAt` compared on arrival and again before sending; delivery in order per SKU; older unsent messages `SUPERSEDED` |
 
 ## Testing
@@ -237,6 +279,13 @@ what can be observed from outside: HTTP responses, rows in the database, and the
 | Replay of an old `DEAD` message after a newer one was delivered (also with the same `changedAt`) | `SUPERSEDED`; the old quantity is not sent |
 | Newer message of a SKU while an older one is in flight | waits; another SKU goes through; the old one, once retried, is `SUPERSEDED` |
 | Outbox admin API | filter by status; unknown status 400; unknown id 404 |
+| A job reaches DONE | the ERP success timer goes up by exactly 1 (measured before/after); `ordersync_jobs{status="DONE"}` is 1 |
+| A job pending for 120 s | the oldest-pending-age gauge is at least 120 |
+| Database not answering (table locked by another transaction) | the scrape still answers in under 1 s with the last values; the snapshot age grows, and goes back down afterwards |
+| A webhook with a bad signature | `ordersync_webhook_received_total{source="shop",result="unauthorized"}` goes up by 1 |
+| A breaker forced open | its `resilience4j_circuitbreaker_state` series reports it; health component `DEGRADED`, overall 200, liveness `UP` |
+| Management port | health and prometheus 200; any other actuator path 401; on the application port, `/actuator/*` is 401 |
+| Correlation ids | worker and webhook log lines carry `eventId` / `jobId` from the MDC |
 
 Pure logic (money parsing, the order transformer, backoff, HMAC) has plain unit tests. Every test has a comment
 naming the code change that would make it fail, and each of those changes was made by hand to confirm the test
@@ -248,8 +297,10 @@ really does fail.
 - [ADR 0002: Idempotency with an inbox and an Idempotency-Key](docs/adr/0002-idempotency-inbox-and-idempotency-key.md)
 - [ADR 0003: Persistent retries vs. in-memory, and the circuit breaker](docs/adr/0003-persistent-retries-vs-in-memory-and-circuit-breaker.md)
 - [ADR 0004: Transactional outbox for the stock sync](docs/adr/0004-transactional-outbox-for-stock-sync.md)
+- [ADR 0005: Observability](docs/adr/0005-observability.md)
 
 ## Stack
 
 Java 25, Spring Boot 4.1 (Web MVC, Data JPA + JdbcClient, Security, Validation, Actuator), PostgreSQL 17 with Flyway,
-Resilience4j, springdoc-openapi, JUnit 5, AssertJ, Testcontainers, WireMock, Awaitility. Gradle (Kotlin DSL).
+Resilience4j, Micrometer + Prometheus + Grafana, springdoc-openapi, JUnit 5, AssertJ, Testcontainers, WireMock,
+Awaitility. Gradle (Kotlin DSL).
