@@ -17,7 +17,8 @@ services:
 
   erp-mock:
     image: wiremock/wiremock:3.13.1
-    command: ["--global-response-templating", "--disable-banner"]
+    # The journal (every request received) is what the resilience run checks for duplicates: keep it bounded but big.
+    command: ["--global-response-templating", "--disable-banner", "--max-request-journal-entries=100000"]
     ports:
       - "8089:8080"
     volumes:
@@ -49,6 +50,9 @@ services:
       SHOP_BASE_URL: http://shop-mock:8080
       SHOP_API_TOKEN: dev-shop-token
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+      # scripts/resilience-run.sh shortens these two for the load run (see docs/results/README.md); defaults 30s.
+      CB_WAIT_OPEN: ${CB_WAIT_OPEN:-30s}
+      CIRCUIT_OPEN_DELAY: ${CIRCUIT_OPEN_DELAY:-30s}
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,3 +84,16 @@ services:
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+
+  # Load generator for the resilience run; only started explicitly (docker compose --profile load run k6 ...).
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: ["load"]
+    volumes:
+      - ./load/k6:/scripts:ro
+      - ./docs/results:/results
+    environment:
+      BASE_URL: http://app:8080
+      SHOP_WEBHOOK_SECRET: dev-webhook-secret
+    depends_on:
+      - app
