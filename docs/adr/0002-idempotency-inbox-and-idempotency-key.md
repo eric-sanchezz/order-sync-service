@@ -38,6 +38,11 @@ constraints do the work, so two concurrent deliveries cannot both create a job.
   | `DONE` | `200 {"duplicate": true}`. Changing an order that already exists in the ERP is out of scope: it needs an update contract with the ERP. |
 
   Except in the `IN_PROGRESS` case, the new event is kept in `inbox_event`, and the job points to it.
+
+  Known limitation: if an earlier attempt of a `RETRY` job did reach the ERP (for example, the ERP created the order
+  but the response timed out), the ERP already holds the old payload under `SHOP-<id>`. An idempotent ERP answers the
+  next attempt with that existing order and ignores the new payload, so the job ends `DONE` with the old data. Fixing
+  that also needs an update contract with the ERP.
 - Orders without an id get no business key (`NULL` never conflicts). The worker sends them `DEAD`.
 - Jobs created before V5 were not backfilled. Parsing their payloads in SQL was not worth it before going live.
 
