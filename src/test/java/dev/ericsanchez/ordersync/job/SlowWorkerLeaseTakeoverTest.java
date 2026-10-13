@@ -39,7 +39,8 @@ class SlowWorkerLeaseTakeoverTest extends IntegrationTest {
 	@Autowired
 	private ErpClient erpClient;
 
-	// Breaks if: the Idempotency-Key stops being the event id (a lease takeover would create a second ERP order),
+	// Breaks if: the Idempotency-Key stops being derived from the shop order (a lease takeover would create a second
+	// ERP order; adapted by the coder in H2 round 2: the key used to be the event id),
 	// or the result guard loses the locked_until check (A's late write would win).
 	@Test
 	void secondSendAfterALeaseTakeoverReusesTheIdempotencyKeyAndOnlyOneResultIsStored() {
@@ -58,7 +59,7 @@ class SlowWorkerLeaseTakeoverTest extends IntegrationTest {
 		assertThat(lateResult).isInstanceOf(ErpResult.Success.class);
 		assertThat(lateWriteStored).isFalse();
 		this.erp.verifyThat(2, postRequestedFor(urlEqualTo(SALES_ORDERS))
-			.withHeader("Idempotency-Key", equalTo("evt-takeover")));
+			.withHeader("Idempotency-Key", equalTo("SHOP-1001")));
 		assertThat(jobRow(claimedBySlowWorker.id())).containsEntry("status", "DONE")
 			.containsEntry("erp_order_id", "ERP-SAME");
 	}

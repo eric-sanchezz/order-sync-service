@@ -14,17 +14,44 @@ Duplicates can appear at two points:
 
 ## Decision
 
-**Layer 1: inbox.** Every webhook carries `X-Shop-Event-Id`. In one transaction, the webhook runs
-`INSERT INTO inbox_event ... ON CONFLICT (event_id) DO NOTHING RETURNING id`. If the insert happens, a `PENDING`
-job is created and we answer `202`. If not, we look up the existing job and answer `200 {"duplicate": true}`. The
-UNIQUE constraint does the work, so two concurrent deliveries of the same event cannot both win.
+**Layer 1: inbox, with two keys.** Every webhook carries `X-Shop-Event-Id`. In one transaction, the webhook runs
+`INSERT INTO inbox_event ... ON CONFLICT (event_id) DO NOTHING RETURNING id`, then creates the job with
+`INSERT INTO sync_job (..., shop_order_id, ...) ... ON CONFLICT (shop_order_id) DO NOTHING`. If both inserts
+happen we answer `202`. A repeated event id answers `200 {"jobId": <existing job>, "duplicate": true}`. The UNIQUE
+constraints do the work, so two concurrent deliveries cannot both create a job.
+
+- The **event id** catches a plain redelivery of the same webhook.
+- The **shop order id** (the business key, UNIQUE in `sync_job` since migration V5) catches the same order sent
+  again under a **new** event id. The HMAC cannot catch that case, because it covers the body and not the event id
+  header. A shop that redelivers with a fresh delivery id, or a replayed request, would otherwise create a second job.
+- One job per shop order, but **not** "first delivery wins". A new delivery of a known order may be a correction:
+  the shop fixed the customer of an order that went `DEAD`. Dropping it as a duplicate would leave the order stuck
+  forever, since a replay would resend the old payload. So the new delivery is handled by the state of the job. The
+  job row is locked (`SELECT ... FOR UPDATE`) while deciding, and the worker's claim skips locked rows, so the two
+  never race:
+
+  | Job state | New delivery (new event id, valid signature) |
+  |---|---|
+  | `PENDING`, `RETRY` | The job takes the new payload (the last delivery wins) and keeps its attempts and schedule. `202` |
+  | `DEAD` | The job takes the new payload and starts over: `PENDING`, 0 attempts, no error. `202` |
+  | `IN_PROGRESS` | `409`, and **nothing** is stored, not even the inbox row. The shop retries the webhook later. A stored row would turn that retry (same event id) into a "duplicate" and lose the correction. |
+  | `DONE` | `200 {"duplicate": true}`. Changing an order that already exists in the ERP is out of scope: it needs an update contract with the ERP. |
+
+  Except in the `IN_PROGRESS` case, the new event is kept in `inbox_event`, and the job points to it.
+- Orders without an id get no business key (`NULL` never conflicts). The worker sends them `DEAD`.
+- Jobs created before V5 were not backfilled. Parsing their payloads in SQL was not worth it before going live.
 
 Order of checks: HMAC signature, then event id (1-200 characters), then JSON readability, then storage. Nothing is
 stored for a request that fails any check.
 
-**Layer 2: Idempotency-Key.** Every ERP call sends `Idempotency-Key: <event_id>` (and the same value as
-`X-Correlation-Id`). An ERP that honours the header returns the original result for a repeated key instead of
-creating a new order. Retries after a timeout, and a job re-claimed after a lost lease (ADR 0001), are safe.
+**Layer 2: Idempotency-Key.** Every ERP call sends `Idempotency-Key: SHOP-<shop order id>`, the same value as
+`externalReference` in the body. The event id goes as `X-Correlation-Id`, for tracing. An ERP that honours the
+header returns the original result for a repeated key instead of creating a new order.
+
+The key is derived from the **order**, not from the delivery. So every path that could send the same order twice
+carries the same key: a retry after a timeout, a job re-claimed after a lost lease (ADR 0001), a replay, and even
+the same order arriving under a new event id if layer 1 were bypassed. An earlier version used the event id. That
+protected retries, but a new event id for the same order produced a second key, and with it a second ERP order.
 
 ## The ERP contract is invented
 
@@ -38,8 +65,8 @@ A manual replay of a `DEAD` job sends the same `Idempotency-Key` again. That is 
 attempts never created the order (a 4xx, or a run of 5xx). But if the ERP rejected the order (e.g. `422`) and
 **remembers that answer under the key**, the replay gets the same `422` even after the data was fixed. Real APIs
 differ: some only store successful responses, some store everything for 24 h. With such an ERP, the replay would
-need a new key (for example `<event_id>-replay-<n>`). We keep the plain event id because it is the safest choice
-against duplicates, and we document the trade-off here.
+need a new key (for example `SHOP-<id>-replay-<n>`). We keep the plain order reference because it is the safest
+choice against duplicates, and we document the trade-off here.
 
 ## When the ERP answered but the result cannot be written
 

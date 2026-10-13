@@ -11,6 +11,7 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpResponse;
@@ -20,8 +21,10 @@ import org.springframework.web.client.RestClientException;
 
 /**
  * Creates sales orders in the ERP. Never throws for HTTP or IO problems: every attempt ends in an {@link ErpResult}.
- * The shop event id goes out as {@code Idempotency-Key}, the second idempotency layer, so a retry after a timeout
- * does not create the order twice.
+ * The shop order reference ({@code SHOP-<order id>}) goes out as {@code Idempotency-Key}, the second idempotency
+ * layer: it is derived from the order, not from the delivery, so a retry after a timeout, a lease takeover or the same
+ * order arriving under another event id all carry the same key, and an idempotent ERP creates the order once. The
+ * event id travels as {@code X-Correlation-Id} for tracing.
  */
 @Component
 public class ErpClient {
@@ -36,7 +39,8 @@ public class ErpClient {
 
 	private final JsonMapper jsonMapper;
 
-	public ErpClient(RestClient erpRestClient, CircuitBreaker erpCircuitBreaker, JsonMapper jsonMapper) {
+	public ErpClient(@Qualifier("erpRestClient") RestClient erpRestClient,
+			@Qualifier("erpCircuitBreaker") CircuitBreaker erpCircuitBreaker, JsonMapper jsonMapper) {
 		this.restClient = erpRestClient;
 		this.circuitBreaker = erpCircuitBreaker;
 		this.jsonMapper = jsonMapper;
@@ -63,10 +67,10 @@ public class ErpClient {
 		return throwable instanceof RetryableFailure;
 	}
 
-	public ErpResult createSalesOrder(String eventId, ErpOrder order) {
+	public ErpResult createSalesOrder(String correlationId, ErpOrder order) {
 		try {
 			return this.circuitBreaker.executeSupplier(() -> {
-				ErpResult result = post(eventId, order);
+				ErpResult result = post(correlationId, order);
 				if (result instanceof ErpResult.Retryable retryable) {
 					throw new RetryableFailure(retryable);
 				}
@@ -81,13 +85,13 @@ public class ErpClient {
 		}
 	}
 
-	private ErpResult post(String eventId, ErpOrder order) {
+	private ErpResult post(String correlationId, ErpOrder order) {
 		try {
 			return this.restClient.post()
 				.uri(SALES_ORDERS_PATH)
 				.contentType(MediaType.APPLICATION_JSON)
-				.header("Idempotency-Key", eventId)
-				.header("X-Correlation-Id", eventId)
+				.header("Idempotency-Key", order.externalReference())
+				.header("X-Correlation-Id", correlationId)
 				.body(order)
 				.exchange((request, response) -> classify(response));
 		}

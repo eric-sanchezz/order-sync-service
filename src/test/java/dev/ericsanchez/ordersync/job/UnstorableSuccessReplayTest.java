@@ -44,7 +44,7 @@ class UnstorableSuccessReplayTest extends IntegrationTest {
 
 		assertThat(jobRow(jobId)).containsEntry("status", "DONE").containsEntry("erp_order_id", longOrderId);
 		this.erp.verifyThat(1, postRequestedFor(urlEqualTo(SALES_ORDERS))
-			.withHeader("Idempotency-Key", equalTo("evt-unstorable")));
+			.withHeader("Idempotency-Key", equalTo("SHOP-1001")));
 	}
 
 }
