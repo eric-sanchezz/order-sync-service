@@ -16,8 +16,9 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /workspace/build/libs/order-sync-service-0.0.1-SNAPSHOT.jar app.jar
 USER app
-EXPOSE 8080
+# 8080: application. 8081: management (health, Prometheus scrape), meant for the internal network only.
+EXPOSE 8080 8081
 # Liveness only: an ERP outage must never make Docker restart the app.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=40s --retries=5 \
-    CMD curl -fs http://localhost:8080/actuator/health/liveness || exit 1
+    CMD curl -fs http://localhost:8081/actuator/health/liveness || exit 1
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: order-sync-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Management port of the app, only reachable inside the compose network.
+      - targets: ["app:8081"]
