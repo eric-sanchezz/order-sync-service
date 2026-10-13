@@ -1,0 +1,7 @@
+{
+  "id": 1002, "number": "1002", "currency": "EUR", "total": "25.00", "created_at": "2026-10-13T10:05:00Z",
+  "customer": { "id": 999, "email": "compras@cliente-desconocido.test", "company": "Cliente Desconocido SL" },
+  "line_items": [
+    { "sku": "LLAVE-ALLEN-5", "name": "Llave Allen 5mm", "quantity": 5, "price": "5.00" }
+  ]
+}

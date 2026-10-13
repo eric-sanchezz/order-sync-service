@@ -1,0 +1,41 @@
+# Demo stack: the service, Postgres and a WireMock "unstable ERP".
+# Secrets here are demo values (dev-*); real deployments pass their own.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ordersync
+      POSTGRES_USER: ordersync
+      POSTGRES_PASSWORD: ordersync
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ordersync -d ordersync"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  erp-mock:
+    image: wiremock/wiremock:3.13.1
+    command: ["--global-response-templating", "--disable-banner"]
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./erp-mock:/home/wiremock
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/ordersync
+      DB_USER: ordersync
+      DB_PASSWORD: ordersync
+      ERP_BASE_URL: http://erp-mock:8080
+      SHOP_WEBHOOK_SECRET: dev-webhook-secret
+      ADMIN_API_KEY: dev-admin-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      erp-mock:
+        condition: service_started

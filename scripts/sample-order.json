@@ -1,0 +1,8 @@
+{
+  "id": 1001, "number": "1001", "currency": "EUR", "total": "150.00", "created_at": "2026-10-13T10:00:00Z",
+  "customer": { "id": 42, "email": "compras@ferreteria-ejemplo.test", "company": "Ferreteria Ejemplo SL" },
+  "line_items": [
+    { "sku": "TORN-M6-100", "name": "Tornillo M6 (caja 100)", "quantity": 10, "price": "12.50" },
+    { "sku": "LLAVE-ALLEN-5", "name": "Llave Allen 5mm", "quantity": 5, "price": "5.00" }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "mappings": [
+    {
+      "scenarioName": "erp-unstable",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "second-call",
+      "request": { "method": "POST", "url": "/api/v1/sales-orders" },
+      "response": {
+        "status": 503,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "error": "ERP temporarily unavailable" },
+        "delayDistribution": { "type": "uniform", "lower": 50, "upper": 800 }
+      }
+    },
+    {
+      "scenarioName": "erp-unstable",
+      "requiredScenarioState": "second-call",
+      "newScenarioState": "third-call",
+      "request": { "method": "POST", "url": "/api/v1/sales-orders" },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"orderId\":\"ERP-{{randomValue length=8 type='NUMERIC'}}\"}",
+        "delayDistribution": { "type": "uniform", "lower": 50, "upper": 800 }
+      }
+    },
+    {
+      "scenarioName": "erp-unstable",
+      "requiredScenarioState": "third-call",
+      "newScenarioState": "Started",
+      "request": { "method": "POST", "url": "/api/v1/sales-orders" },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"orderId\":\"ERP-{{randomValue length=8 type='NUMERIC'}}\"}",
+        "delayDistribution": { "type": "uniform", "lower": 50, "upper": 800 }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+.git
+.gradle
+build
+.equipo
+BRIEF.md
+*.md
+docs
+scripts
+erp-mock
+.github
+.idea
