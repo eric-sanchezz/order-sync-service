@@ -13,7 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.function.BooleanSupplier;
 
 import dev.ericsanchez.ordersync.config.OrderSyncProperties;
-import dev.ericsanchez.ordersync.job.BackoffPolicy;
+import dev.ericsanchez.ordersync.retry.BackoffPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;

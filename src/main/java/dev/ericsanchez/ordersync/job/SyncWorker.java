@@ -14,6 +14,7 @@ import dev.ericsanchez.ordersync.config.OrderSyncProperties;
 import dev.ericsanchez.ordersync.erp.ErpClient;
 import dev.ericsanchez.ordersync.erp.ErpResult;
 import dev.ericsanchez.ordersync.observability.SyncMetrics;
+import dev.ericsanchez.ordersync.retry.BackoffPolicy;
 import dev.ericsanchez.ordersync.transform.ErpOrder;
 import dev.ericsanchez.ordersync.transform.OrderTransformer;
 import dev.ericsanchez.ordersync.webhook.ShopOrder;

@@ -4,17 +4,18 @@ import java.time.Clock;
 import java.util.Random;
 import java.util.random.RandomGenerator;
 
-import dev.ericsanchez.ordersync.erp.ErpClient;
-import dev.ericsanchez.ordersync.job.BackoffPolicy;
-import dev.ericsanchez.ordersync.webhook.HmacVerifier;
-import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import dev.ericsanchez.ordersync.retry.BackoffPolicy;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.client.RestClient;
 
+/**
+ * Shared infrastructure beans. The beans of each integration live in its own package ({@code erp.ErpConfig},
+ * {@code webhook.WebhookConfig}, {@code stock.StockConfig}), so that {@code config} depends on none of them and the
+ * packages stay free of cycles (checked by {@code ArchitectureTest}).
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(OrderSyncProperties.class)
 public class AppConfig {
@@ -37,27 +38,8 @@ public class AppConfig {
 	}
 
 	@Bean
-	HmacVerifier shopWebhookVerifier(OrderSyncProperties properties) {
-		return new HmacVerifier(properties.webhook().secret());
-	}
-
-	@Bean
-	RestClient erpRestClient(OrderSyncProperties properties) {
-		return HttpClients.restClient(properties.erp().baseUrl(), properties.erp().timeout()).build();
-	}
-
-	@Bean
 	CircuitBreakerRegistry circuitBreakerRegistry() {
 		return CircuitBreakerRegistry.ofDefaults();
-	}
-
-	/**
-	 * Only retryable failures (5xx, 408, 429, timeouts, IO) count against the breaker. A 4xx means the ERP is up and
-	 * rejected one order, so it must not open the circuit for everybody else.
-	 */
-	@Bean
-	CircuitBreaker erpCircuitBreaker(CircuitBreakerRegistry registry, OrderSyncProperties properties) {
-		return registry.circuitBreaker("erp", properties.erp().circuitBreaker().toConfig(ErpClient::isRecordedFailure));
 	}
 
 }

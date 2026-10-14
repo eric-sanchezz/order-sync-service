@@ -1,4 +1,4 @@
-package dev.ericsanchez.ordersync.job;
+package dev.ericsanchez.ordersync.retry;
 
 import java.time.Duration;
 import java.util.random.RandomGenerator;
