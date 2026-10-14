@@ -361,6 +361,36 @@ Pure logic (money parsing, the order transformer, backoff, HMAC) has plain unit 
 naming the code change that would make it fail, and each of those changes was made by hand to confirm the test
 really does fail.
 
+## Quality gates
+
+Three checks on top of the tests, with figures from a local run on 2026-10-14
+([report](docs/quality/20261014-quality.md), with the raw JaCoCo CSV and PIT XML next to it):
+
+- **Architecture rules** (ArchUnit, part of `./gradlew build`; all 6 pass):
+  - the order mapping (`transform`) is plain Java: no Spring, JPA, `java.net`, queue or ERP-client code in it;
+  - controllers never touch the database: no repositories, and no JDBC, JPA or `DataSource` either;
+  - no dependency cycles between packages;
+  - money is `long` cents: no `double`, `float`, `BigDecimal` or `NumberFormat` where orders are read, mapped or
+    sent to the ERP (fields, signatures, generics and calls are checked). Not visible to the rule: a local `double`
+    that goes through no call, and floating point hidden inside some other library's `String` to `long` method;
+  - no field injection (`@Autowired`, `@Value`, `@Inject` or `@Resource` on fields) and no sleeping thread
+    (`Thread.sleep`, `TimeUnit.sleep`, `LockSupport.park*`) in production code.
+
+  Each rule was broken once by hand to confirm that it fails.
+- **Coverage** (JaCoCo, the whole suite including the integration tests, no exclusions): 89.22% of lines
+  (1027 of 1151) and 82.31% of branches (242 of 294); another run of the same code covered 1029 lines, because two
+  timing-dependent paths in the metrics code are not always run. `./gradlew build` fails below 80% of lines.
+- **Mutation testing** (PIT, on the pure logic: money parsing, the order transformer, backoff, HMAC; against their
+  unit tests): 79 of 79 mutants killed, 100%. The first run killed 66 of 79 (83.5%). Every survivor pointed at a
+  missing test (for example, no unit test reached six of the order validations, and a cap that is not a multiple
+  of the backoff delay was rounded up), and those tests were added. `./gradlew pitest` fails below 95%. It is not
+  part of `build`; the CI workflow runs it as a separate job.
+
+```bash
+./gradlew clean build pitest
+# reports: build/reports/jacoco/test/html/index.html, build/reports/pitest/index.html
+```
+
 ## Design decisions
 
 - [ADR 0001: Postgres as the job queue (SKIP LOCKED)](docs/adr/0001-postgres-queue-skip-locked.md)
@@ -372,5 +402,5 @@ really does fail.
 ## Stack
 
 Java 25, Spring Boot 4.1 (Web MVC, Data JPA + JdbcClient, Security, Validation, Actuator), PostgreSQL 17 with Flyway,
-Resilience4j, Micrometer + Prometheus + Grafana, springdoc-openapi, JUnit 5, AssertJ, Testcontainers, WireMock,
-Awaitility. Gradle (Kotlin DSL).
+Resilience4j, Micrometer + Prometheus + Grafana, springdoc-openapi, JUnit 6, AssertJ, Testcontainers, WireMock,
+Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Kotlin DSL).
