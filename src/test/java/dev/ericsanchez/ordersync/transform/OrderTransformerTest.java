@@ -5,11 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.LongFunction;
+import java.util.stream.Stream;
 
 import dev.ericsanchez.ordersync.webhook.ShopOrder;
 import dev.ericsanchez.ordersync.webhook.ShopOrder.Customer;
 import dev.ericsanchez.ordersync.webhook.ShopOrder.LineItem;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class OrderTransformerTest {
 
@@ -28,6 +32,44 @@ class OrderTransformerTest {
 		assertThat(result).isEqualTo(new OrderTransformer.Ok(new ErpOrder("CLI-0042", "SHOP-1001", "EUR", 15000,
 				List.of(new ErpOrder.Line(1, "TORN-M6-100", 10, 1250, 12500),
 						new ErpOrder.Line(2, "LLAVE-ALLEN-5", 5, 500, 2500)))));
+	}
+
+	// Breaks if: the check becomes quantity <= 1 (a single unit is a valid line).
+	@Test
+	void acceptsAQuantityOfOne() {
+		ShopOrder order = new ShopOrder(1001L, "1001", "EUR", "12.50", new Customer(42L, null, null),
+				List.of(new LineItem("TORN-M6-100", "Tornillo", 1, "12.50")));
+
+		assertThat(OrderTransformer.transform(order, CUSTOMERS)).isEqualTo(new OrderTransformer.Ok(new ErpOrder(
+				"CLI-0042", "SHOP-1001", "EUR", 1250, List.of(new ErpOrder.Line(1, "TORN-M6-100", 1, 1250, 1250)))));
+	}
+
+	// Each row is one validation of its own, with the reason the job goes DEAD with.
+	// Breaks if: any of these checks is removed (the order would reach the ERP, or a NullPointerException would
+	// send the job to RETRY forever) or returns another reason.
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("invalidOrders")
+	void rejectsInvalidOrdersWithTheirReason(String description, ShopOrder order, String reason) {
+		assertThat(OrderTransformer.transform(order, CUSTOMERS)).isEqualTo(new OrderTransformer.Invalid(reason));
+	}
+
+	static Stream<Arguments> invalidOrders() {
+		Customer customer = new Customer(42L, null, null);
+		List<LineItem> oneLine = List.of(new LineItem("TORN-M6-100", "Tornillo", 1, "12.50"));
+		return Stream.of(
+				Arguments.of("no order at all", null, "order is empty"),
+				Arguments.of("no currency", new ShopOrder(1001L, "1001", null, "12.50", customer, oneLine),
+						"missing field: currency"),
+				Arguments.of("malformed total", new ShopOrder(1001L, "1001", "EUR", "12,50", customer, oneLine),
+						"missing or invalid field: total"),
+				Arguments.of("blank sku", new ShopOrder(1001L, "1001", "EUR", "12.50", customer,
+						List.of(new LineItem(" ", "Tornillo", 1, "12.50"))), "line 1: missing sku"),
+				Arguments.of("malformed price", new ShopOrder(1001L, "1001", "EUR", "12.50", customer,
+						List.of(new LineItem("TORN-M6-100", "Tornillo", 1, "12.5.0"))),
+						"line 1: missing or invalid price"),
+				Arguments.of("customer the ERP does not know",
+						new ShopOrder(1001L, "1001", "EUR", "12.50", new Customer(999L, null, null), oneLine),
+						"unknown customer: 999"));
 	}
 
 	// Breaks if: a missing required field is not checked (the ERP would get "SHOP-null").

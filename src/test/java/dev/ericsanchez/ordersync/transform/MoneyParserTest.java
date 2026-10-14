@@ -6,6 +6,7 @@ import java.util.OptionalLong;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class MoneyParserTest {
@@ -17,8 +18,10 @@ class MoneyParserTest {
 		assertThat(MoneyParser.toCents(amount)).isEqualTo(OptionalLong.of(expectedCents));
 	}
 
-	// Breaks if: the regex accepts a sign, more than two decimals, an exponent, letters or the empty string.
+	// Breaks if: the regex accepts a sign, more than two decimals, an exponent, letters or the empty string, or a
+	// missing amount (null) is not answered with empty.
 	@ParameterizedTest
+	@NullSource
 	@ValueSource(strings = { "12.345", "-1", "abc", "", "1e3" })
 	void malformedAmountsAreRejected(String amount) {
 		assertThat(MoneyParser.toCents(amount)).isEmpty();

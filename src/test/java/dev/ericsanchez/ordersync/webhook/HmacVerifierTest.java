@@ -21,6 +21,14 @@ class HmacVerifierTest {
 		assertThat(verifier.verify(BODY, "sha256=" + HEX)).isTrue();
 	}
 
+	// Breaks if: sign() builds the header with another prefix, encoding or digest than the one verify() expects.
+	@Test
+	void signProducesTheHeaderTheShopSends() {
+		HmacVerifier verifier = new HmacVerifier("key");
+
+		assertThat(verifier.sign(BODY)).isEqualTo("sha256=" + HEX);
+	}
+
 	// Breaks if: verify() always returns true, or compares only a prefix of the bytes.
 	@Test
 	void rejectsABodyWithOneAlteredByte() {
