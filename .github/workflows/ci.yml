@@ -6,14 +6,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "25"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       # Tests (Testcontainers uses the runner's Docker), ArchUnit rules, JaCoCo report and its coverage gate.
       - name: Build and test
         run: ./gradlew build
@@ -28,7 +28,7 @@ jobs:
               missed, covered = int(counter.get("missed")), int(counter.get("covered"))
               print(f"| {counter.get('type')} | {covered} | {missed + covered} | {100 * covered / (missed + covered):.1f} |")
           EOF
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
@@ -36,14 +36,14 @@ jobs:
 
   mutation:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "25"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
       # Only the pure logic's unit tests run here (see the pitest block in build.gradle.kts): no Docker needed.
       - name: Mutation testing
         run: ./gradlew pitest
@@ -60,7 +60,7 @@ jobs:
           for status, count in sorted(statuses.items()):
               print(f"- {status}: {count}")
           EOF
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutation-report
