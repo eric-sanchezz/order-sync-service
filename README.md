@@ -1,8 +1,8 @@
 # order-sync-service
 
 [![CI](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml/badge.svg)](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml)
-[![Line coverage](https://img.shields.io/badge/line%20coverage-90.38%25-brightgreen)](docs/quality/20261015-h6r3-quality.md)
-[![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h6r3-quality.md)
+[![Line coverage](https://img.shields.io/badge/line%20coverage-90.44%25-brightgreen)](docs/quality/20261015-h7-quality.md)
+[![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h7-quality.md)
 [![Java 25](https://img.shields.io/badge/Java-25-blue)](build.gradle.kts)
 [![Spring Boot 4.1.1](https://img.shields.io/badge/Spring%20Boot-4.1.1-6db33f)](build.gradle.kts)
 
@@ -279,6 +279,32 @@ The `dev-*` secrets in `docker-compose.yml` are demo values. Configuration comes
 Retries, backoff and `CB_WAIT_OPEN` apply to both directions. The service refuses to start if a secret, the API key
 or the shop token is blank.
 
+## Operator page
+
+A small page for whoever runs the service: <http://localhost:8080/ops/index.html>. Type the admin key in the
+X-API-Key field (`dev-admin-key` in the demo) and press **Use key**. From there you can:
+
+- see the job counts per status and the end-to-end latency of `DONE` jobs (the same figures as `/admin/stats`);
+- list jobs and outbox messages, filtered by status, 20 per page, and open one to see every field and its payload;
+- replay a `DEAD` job or message, after a confirmation. The page then reloads it and shows its real state; if it was
+  no longer `DEAD` (another operator replayed it first, say), the API's 409 is shown as a message.
+
+![Operator page: job counts, the job list and the detail of a job replayed after an ERP 422, now DONE](docs/images/operator-page.png)
+
+*Job 440 went `DEAD` while the ERP answered 422. Once the cause was removed it was replayed from this page, and it is
+now `DONE` with its ERP order id. Below, the outbox with both destinations.*
+
+Security:
+
+- The page is static and public, like the API docs: it holds no data. The data only comes from `/admin/**` with the
+  key, which the page sends in the `X-API-Key` header. The key is kept in the tab's `sessionStorage` (gone when the
+  tab is closed; **Forget key** clears it at once), never in the URL or in the page.
+- Only `/ops/**` is opened, with its own strict Content-Security-Policy: its own script and styles only, no inline
+  code, no framing. Everything that comes from the API is written with `textContent`, so an order with HTML in it
+  (say, a company called `<img src=x onerror=alert(1)>`) is shown as text and never runs.
+- It uses only the existing admin API: the job list has no shop order id (it is in the payload), and the outbox is
+  filtered by status only. No cookies, so no CSRF; same origin, so no CORS.
+
 ## Observability
 
 Open <http://localhost:3000> (anonymous read-only access). The provisioned dashboard **order-sync-service** shows:
@@ -439,6 +465,7 @@ what can be observed from outside: HTTP responses, rows in the database, and the
 | Circuit breaker forced open | `RETRY` with 0 attempts and no ERP call; `DONE` after it closes |
 | Two workers at once, with the oldest jobs row-locked by another transaction | every order reaches the ERP exactly once |
 | Admin API without key / wrong key / right key | 401 / 401 / 200 |
+| Operator page (`/ops/**`) without a key | 200, with a CSP that allows no inline code or framing; the served HTML, JS and CSS hold no key, no inline script or `on*=` handler, no `innerHTML`; `/opsx/...`, `/index.html` and `/static/ops/...` still 401 |
 | Valid stock webhook | 202; the shop receives the PUT with `stock_quantity`, `Idempotency-Key` and bearer token; message `DELIVERED`; `stock_level` updated |
 | Stock webhook with a bad or missing signature, or the shop's | 401, nothing stored |
 | Stock update signed but unusable (unreadable, missing field, negative or fractional quantity, `changedAt` without offset, as a number or more than 5 minutes in the future, code > 100 chars, control characters, missing or > 200-char event id) | 400, nothing stored |
@@ -477,10 +504,15 @@ Pure logic (money parsing, the order transformer, backoff, HMAC) has plain unit 
 naming the code change that would make it fail, and each of those changes was made by hand to confirm the test
 really does fail.
 
+The operator page's JavaScript has no tests in CI (there is no browser in the build). It was checked with an
+end-to-end pass in Playwright (Python) against the docker-compose stack, kept outside the repository: wrong key and
+no key, stats against the API, filters, details, a replay to `DONE`, the 409 when the job changed meanwhile, an
+outbox replay, an order with HTML in it, Forget key, and no CSP violation in the console.
+
 ## Quality gates
 
 Three checks on top of the tests, with figures from a local run on 2026-10-15
-([report](docs/quality/20261015-h6r3-quality.md), with the raw JaCoCo CSV and PIT XML next to it; the
+([report](docs/quality/20261015-h7-quality.md), with the raw JaCoCo CSV and PIT XML next to it; the
 [first report](docs/quality/20261014-quality.md) explains the method and the mutants found):
 
 - **Architecture rules** (ArchUnit, part of `./gradlew build`; all 6 pass):
@@ -494,8 +526,8 @@ Three checks on top of the tests, with figures from a local run on 2026-10-15
     (`Thread.sleep`, `TimeUnit.sleep`, `LockSupport.park*`) in production code.
 
   Each rule was broken once by hand to confirm that it fails.
-- **Coverage** (JaCoCo, the whole suite including the integration tests, no exclusions): 90.38% of lines
-  (1203 of 1331) and 82.30% of branches (279 of 339). Two runs of the same code can differ by about two lines,
+- **Coverage** (JaCoCo, the whole suite including the integration tests, no exclusions): 90.44% of lines
+  (1212 of 1340) and 82.30% of branches (279 of 339). Two runs of the same code can differ by about two lines,
   because two timing-dependent paths in the metrics code are not always run. `./gradlew build` fails below 90% of
   lines (the measured value rounded down to the ten).
 - **Mutation testing** (PIT, on the pure logic: money parsing, the order transformer, backoff, HMAC; against their

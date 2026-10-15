@@ -1,8 +1,8 @@
 # order-sync-service
 
 [![CI](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml/badge.svg)](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml)
-[![Line coverage](https://img.shields.io/badge/line%20coverage-90.38%25-brightgreen)](docs/quality/20261015-h6r3-quality.md)
-[![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h6r3-quality.md)
+[![Line coverage](https://img.shields.io/badge/line%20coverage-90.44%25-brightgreen)](docs/quality/20261015-h7-quality.md)
+[![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h7-quality.md)
 [![Java 25](https://img.shields.io/badge/Java-25-blue)](build.gradle.kts)
 [![Spring Boot 4.1.1](https://img.shields.io/badge/Spring%20Boot-4.1.1-6db33f)](build.gradle.kts)
 
@@ -294,6 +294,36 @@ Los secretos `dev-*` de `docker-compose.yml` son valores de demo. La configuraci
 Los reintentos, el backoff y `CB_WAIT_OPEN` se aplican en las dos direcciones. El servicio no arranca si un secreto,
 la clave de la API o el token de la tienda están vacíos.
 
+## Página de operador
+
+Una página pequeña para quien opera el servicio: <http://localhost:8080/ops/index.html>. Se escribe la clave de
+administración en el campo X-API-Key (`dev-admin-key` en la demo) y se pulsa **Use key**. Desde ahí se puede:
+
+- ver el recuento de jobs por estado y la latencia de extremo a extremo de los jobs `DONE` (las mismas cifras que
+  `/admin/stats`);
+- listar jobs y mensajes del outbox, filtrados por estado, de 20 en 20, y abrir uno para ver todos sus campos y su
+  payload;
+- relanzar un job o un mensaje `DEAD`, tras una confirmación. Después la página lo vuelve a pedir y muestra su estado
+  real; si ya no estaba `DEAD` (porque otro operador lo relanzó antes, por ejemplo), el 409 de la API se muestra como
+  mensaje.
+
+![Página de operador: recuento de jobs, la lista de jobs y el detalle de un job relanzado tras un 422 del ERP, ya en DONE](docs/images/operator-page.png)
+
+*El job 440 pasó a `DEAD` mientras el ERP respondía 422. Quitada la causa, se relanzó desde esta página y ahora está
+`DONE` con su id de pedido del ERP. Debajo, el outbox con los dos destinos.*
+
+Seguridad:
+
+- La página es estática y pública, como la documentación de la API: no contiene datos. Los datos solo llegan de
+  `/admin/**` con la clave, que la página envía en la cabecera `X-API-Key`. La clave se guarda en el `sessionStorage`
+  de la pestaña (desaparece al cerrarla; **Forget key** la borra en el acto), nunca en la URL ni en la página.
+- Solo se abre `/ops/**`, con su propia Content-Security-Policy estricta: solo su propio script y sus estilos, sin
+  código inline y sin poder meterse en un iframe. Todo lo que llega de la API se escribe con `textContent`, así que un
+  pedido con HTML dentro (por ejemplo, una empresa llamada `<img src=x onerror=alert(1)>`) se ve como texto y nunca se
+  ejecuta.
+- Solo usa la API de administración existente: la lista de jobs no trae el id del pedido de la tienda (está en el
+  payload), y el outbox se filtra solo por estado. Sin cookies, así que sin CSRF; mismo origen, así que sin CORS.
+
 ## Observabilidad
 
 Abre <http://localhost:3000> (acceso anónimo de solo lectura). El dashboard provisionado **order-sync-service**
@@ -459,6 +489,7 @@ base de datos y las peticiones del registro de WireMock.
 | Circuit breaker forzado a abierto | `RETRY` con 0 intentos y sin llamada al ERP; `DONE` cuando se cierra |
 | Dos workers a la vez, con los jobs más antiguos bloqueados por otra transacción | cada pedido llega al ERP exactamente una vez |
 | API de administración sin clave / clave incorrecta / clave correcta | 401 / 401 / 200 |
+| Página de operador (`/ops/**`) sin clave | 200, con una CSP que no permite código inline ni iframes; el HTML, el JS y el CSS servidos no contienen ninguna clave, ni `<script>` inline ni manejadores `on*=`, ni `innerHTML`; `/opsx/...`, `/index.html` y `/static/ops/...` siguen en 401 |
 | Webhook de stock válido | 202; la tienda recibe el PUT con `stock_quantity`, `Idempotency-Key` y token bearer; mensaje `DELIVERED`; `stock_level` actualizado |
 | Webhook de stock con firma incorrecta o ausente, o con la de la tienda | 401, no se guarda nada |
 | Actualización de stock firmada pero inutilizable (ilegible, campo que falta, cantidad negativa o con decimales, `changedAt` sin offset, como número o más de 5 minutos en el futuro, código > 100 caracteres, caracteres de control, id de evento ausente o > 200 caracteres) | 400, no se guarda nada |
@@ -497,10 +528,16 @@ La lógica pura (lectura de importes, el transformador de pedidos, backoff, HMAC
 test lleva un comentario que nombra el cambio de código que lo haría fallar, y cada uno de esos cambios se hizo a mano
 para confirmar que el test falla de verdad.
 
+El JavaScript de la página de operador no tiene tests en CI (en el build no hay navegador). Se comprobó con una pasada
+de extremo a extremo con Playwright (Python) contra el stack de docker-compose, fuera del repositorio: sin clave y con
+una clave incorrecta, estadísticas contra la API, filtros, detalles, un relanzamiento hasta `DONE`, el 409 cuando el
+job ha cambiado entretanto, un relanzamiento del outbox, un pedido con HTML dentro, Forget key y ninguna violación de
+la CSP en la consola.
+
 ## Barreras de calidad
 
 Tres comprobaciones además de los tests, con cifras de una ejecución local del 2026-10-15
-([informe](docs/quality/20261015-h6r3-quality.md), con el CSV de JaCoCo y el XML de PIT en bruto al lado; el
+([informe](docs/quality/20261015-h7-quality.md), con el CSV de JaCoCo y el XML de PIT en bruto al lado; el
 [primer informe](docs/quality/20261014-quality.md) explica el método y los mutantes encontrados):
 
 - **Reglas de arquitectura** (ArchUnit, parte de `./gradlew build`; pasan las 6):
@@ -515,8 +552,8 @@ Tres comprobaciones además de los tests, con cifras de una ejecución local del
     (`Thread.sleep`, `TimeUnit.sleep`, `LockSupport.park*`) en el código de producción.
 
   Cada regla se rompió una vez a mano para confirmar que falla.
-- **Cobertura** (JaCoCo, toda la suite incluidos los tests de integración, sin exclusiones): 90,38 % de líneas
-  (1203 de 1331) y 82,30 % de ramas (279 de 339). Dos ejecuciones del mismo código pueden diferir en unas dos líneas,
+- **Cobertura** (JaCoCo, toda la suite incluidos los tests de integración, sin exclusiones): 90,44 % de líneas
+  (1212 de 1340) y 82,30 % de ramas (279 de 339). Dos ejecuciones del mismo código pueden diferir en unas dos líneas,
   porque dos caminos del código de métricas que dependen de los tiempos no siempre se ejecutan. `./gradlew build` falla
   por debajo del 90 % de líneas (el valor medido redondeado hacia abajo a la decena).
 - **Mutation testing** (PIT, sobre la lógica pura: lectura de importes, el transformador de pedidos, backoff, HMAC;
