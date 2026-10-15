@@ -1,5 +1,11 @@
 # order-sync-service
 
+[![CI](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml/badge.svg)](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml)
+[![Line coverage](https://img.shields.io/badge/line%20coverage-90.38%25-brightgreen)](docs/quality/20261015-h6r3-quality.md)
+[![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h6r3-quality.md)
+[![Java 25](https://img.shields.io/badge/Java-25-blue)](build.gradle.kts)
+[![Spring Boot 4.1.1](https://img.shields.io/badge/Spring%20Boot-4.1.1-6db33f)](build.gradle.kts)
+
 Takes orders from a B2B web shop and creates them in an ERP, and pushes the ERP's stock levels back to the shop,
 without losing or duplicating anything, even when the other side is slow, down, or rejecting requests. What happened
 (order synced, order failed, stock updated) is published to Kafka as domain events, through the same outbox.
