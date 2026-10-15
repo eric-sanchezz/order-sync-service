@@ -12,9 +12,46 @@ Takes orders from a B2B web shop and creates them in an ERP, and pushes the ERP'
 without losing or duplicating anything, even when the other side is slow, down, or rejecting requests. What happened
 (order synced, order failed, stock updated) is published to Kafka as domain events, through the same outbox.
 
-This is the kind of integration I usually build with n8n. Here it is written by hand in Java 25 and Spring Boot 4.1,
-so every guarantee n8n gives you (and a few it doesn't) is explicit code with a test behind it. All data
-(customers, articles, orders) is invented.
+In my day job I build this kind of integration (an ERP and a B2B web shop talking over REST and webhooks) with n8n.
+Here it is written by hand in Java 25 and Spring Boot 4.1, so every guarantee n8n gives you (and a few it doesn't) is
+explicit code with a test behind it. All data (customers, articles, orders) is invented.
+
+## At a glance
+
+| | |
+|---|---|
+| **What it is** | An integration service: orders from shop to ERP, stock from ERP to shop, domain events to Kafka |
+| **Under failure** | ERP down for 60 s under 10 orders/s: **1711 of 1711 orders delivered, 0 lost, 0 duplicated** (measured before the Kafka events were added; [how it was measured](#resilience-under-failure)) |
+| **Tests** | 178, of which 135 are integration tests against a real Postgres and WireMock, plus a real Kafka broker for the event tests (Testcontainers); each one was confirmed to fail when the code it guards is broken |
+| **Quality gates** | 90.4% line coverage, 79 of 79 mutants killed on the pure logic (PIT), 6 architecture rules (ArchUnit), all run by CI on GitHub Actions |
+| **Try it** | `docker compose up --build -d` starts everything: the service, Postgres, Kafka, Prometheus, Grafana and the mocked shop and ERP ([run it](#run-it)) |
+
+![Grafana dashboard of order-sync-service during a demo run with a 70 s Kafka outage](docs/images/grafana-dashboard.png)
+
+*The provisioned Grafana dashboard during a demo run in which Kafka was paused for 70 s; details in
+[Observability](#observability).*
+
+### What it demonstrates
+
+- **Backend in Java 25 and Spring Boot 4**: webhook endpoints verified with HMAC, an admin REST API (API key) with an
+  OpenAPI spec, and a small operator page.
+- **Reliable integration patterns**: idempotency (inbox table and `Idempotency-Key`), persistent retries with backoff,
+  circuit breakers (Resilience4j), transactional outbox, job leases with `FOR UPDATE SKIP LOCKED`.
+- **Event-driven design with Kafka**: domain events published through the outbox, in order per key, with a sequence
+  number per aggregate; the at-least-once delivery is documented and was observed in a real run.
+- **PostgreSQL** as the job queue, with Flyway migrations.
+- **Observability**: Prometheus metrics, a provisioned Grafana dashboard, JSON logs with correlation ids, health
+  checks.
+- **Testing and quality**: Testcontainers integration tests, a load test with an injected ERP outage (k6), mutation
+  testing, architecture rules and a CI pipeline.
+- **Decisions written down**: six [architecture decision records](#design-decisions).
+
+### Contents
+
+[The problem](#the-problem) · [How it works](#how-it-works) · [Run it](#run-it) · [Try it](#try-it) ·
+[Operator page](#operator-page) · [Observability](#observability) · [Resilience under failure](#resilience-under-failure) ·
+[n8n vs. this code](#what-n8n-gives-you-for-free-vs-what-this-code-does) · [Testing](#testing) ·
+[Quality gates](#quality-gates) · [Design decisions](#design-decisions) · [Stack](#stack) · [Author](#author)
 
 ## The problem
 
@@ -313,9 +350,7 @@ and `kafka` circuit breakers, the age of the oldest pending job, outbox messages
 database numbers are, and the Kafka events: published and failed per second, how many are waiting in the outbox and
 the age of the oldest one (the publishing lag), and the keys blocked by a `DEAD` event.
 
-![Grafana dashboard of order-sync-service after about 12 minutes of demo traffic, with a Kafka pause](docs/images/grafana-dashboard.png)
-
-*A real run of about 12 minutes: about 350 orders and 65 stock updates. About 1 order in 10 went to a customer the
+The capture at the [top of this page](#at-a-glance) is that dashboard. *A real run of about 12 minutes: about 350 orders and 65 stock updates. About 1 order in 10 went to a customer the
 ERP doesn't know and ended `DEAD` on purpose (some came back later with the customer fixed and reached `DONE`); 2
 more ended `DEAD` because the stateful ERP mock answers 404 "not matched" to concurrent calls, a limitation of the
 mock itself. Around 17:31 Kafka was paused for 70 s (`docker compose pause kafka`): publishing stopped, up to about
@@ -555,3 +590,8 @@ Three checks on top of the tests, with figures from a local run on 2026-10-15
 Java 25, Spring Boot 4.1 (Web MVC, Data JPA + JdbcClient, Security, Validation, Actuator), PostgreSQL 17 with Flyway,
 Resilience4j, Apache Kafka (Spring for Apache Kafka), Micrometer + Prometheus + Grafana, springdoc-openapi, JUnit 6, AssertJ, Testcontainers, WireMock,
 Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Kotlin DSL).
+
+## Author
+
+Eric Sánchez, backend and integrations developer (Java, Kotlin, Python, SQL). GitHub:
+[eric-sanchezz](https://github.com/eric-sanchezz).
