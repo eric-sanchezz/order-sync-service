@@ -6,6 +6,8 @@
 [![Java 25](https://img.shields.io/badge/Java-25-blue)](build.gradle.kts)
 [![Spring Boot 4.1.1](https://img.shields.io/badge/Spring%20Boot-4.1.1-6db33f)](build.gradle.kts)
 
+**English** | [Español](README.es.md)
+
 Takes orders from a B2B web shop and creates them in an ERP, and pushes the ERP's stock levels back to the shop,
 without losing or duplicating anything, even when the other side is slow, down, or rejecting requests. What happened
 (order synced, order failed, stock updated) is published to Kafka as domain events, through the same outbox.
@@ -239,6 +241,11 @@ The same run also had two `OrderFailed` for order 1002 (`demo-2` going `DEAD`, w
 its replay, with `sequence` 2) and, on `ordersync.stock.v1`, the `StockUpdated` of `stock-1` with key
 `TORN-M6-100`.
 
+![kafka-ui showing the ordersync.orders.v1 topic with one OrderSynced event expanded](docs/images/kafka-ui-orders-topic.png)
+
+*kafka-ui during the demo traffic of the Grafana capture below: records keyed by shop order id, spread over the
+topic's partitions, and one `OrderSynced` opened with its envelope and payload.*
+
 Both scripts sign the file with `openssl dgst -sha256 -hmac` and send exactly those bytes with
 `curl --data-binary`. API docs: <http://localhost:8080/swagger-ui.html>.
 
@@ -280,13 +287,14 @@ and `kafka` circuit breakers, the age of the oldest pending job, outbox messages
 database numbers are, and the Kafka events: published and failed per second, how many are waiting in the outbox and
 the age of the oldest one (the publishing lag), and the keys blocked by a `DEAD` event.
 
-![Grafana dashboard of order-sync-service after about 20 minutes of demo traffic](docs/images/grafana-dashboard.png)
+![Grafana dashboard of order-sync-service after about 12 minutes of demo traffic, with a Kafka pause](docs/images/grafana-dashboard.png)
 
-*A real run: about 80 orders and about 10 stock updates. 7 orders ended `DEAD`: 6 on purpose (a customer the ERP
-doesn't know) and 1 because the stateful ERP mock answers 404 "not matched" to concurrent calls, a limitation of the
-mock itself. Around 18:37 the ERP mock failed for a few minutes: the `erp` breaker opened, orders waited in `RETRY`
-(the "oldest pending job" peak), and all of them reached `DONE` once it answered again. Captured before the Kafka
-panels were added.*
+*A real run of about 12 minutes: about 350 orders and 65 stock updates. About 1 order in 10 went to a customer the
+ERP doesn't know and ended `DEAD` on purpose (some came back later with the customer fixed and reached `DONE`); 2
+more ended `DEAD` because the stateful ERP mock answers 404 "not matched" to concurrent calls, a limitation of the
+mock itself. Around 17:31 Kafka was paused for 70 s (`docker compose pause kafka`): publishing stopped, up to about
+57 events waited in the outbox and the publishing lag reached almost 2 minutes. Once Kafka was back, the backlog went
+out in a burst and no event ended `DEAD`.*
 
 - **Metrics** (Micrometer, scraped by Prometheus every 5 s):
   - `ordersync_jobs{status}`, `ordersync_outbox_messages{status}` and `ordersync_jobs_oldest_pending_age_seconds`
