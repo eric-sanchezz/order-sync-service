@@ -25,6 +25,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 	implementation("org.springframework.boot:spring-boot-starter-flyway")
+	implementation("org.springframework.boot:spring-boot-starter-kafka")
 	implementation("org.springframework.boot:spring-boot-starter-security")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
@@ -36,11 +37,13 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-flyway-test")
+	testImplementation("org.springframework.boot:spring-boot-starter-kafka-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-security-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-validation-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
 	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+	testImplementation("org.testcontainers:testcontainers-kafka")
 	testImplementation("org.testcontainers:testcontainers-postgresql")
 	testImplementation("org.wiremock:wiremock-standalone:3.13.1")
 	testImplementation("org.awaitility:awaitility")
@@ -76,8 +79,8 @@ tasks.jacocoTestReport {
 	}
 }
 
-// Line coverage measured on 2026-10-14: 89.2% to 89.4% (1027 to 1029 of 1151 lines, depending on timing). The gate
-// is that value rounded down to the ten.
+// Line coverage measured on 2026-10-15: 90.4% (1203 of 1331 lines; about two lines vary between runs, see
+// docs/quality). The gate is that value rounded down to the ten (1198 lines needed).
 tasks.jacocoTestCoverageVerification {
 	dependsOn(tasks.test)
 	violationRules {
@@ -85,7 +88,7 @@ tasks.jacocoTestCoverageVerification {
 			limit {
 				counter = "LINE"
 				value = "COVEREDRATIO"
-				minimum = "0.80".toBigDecimal()
+				minimum = "0.90".toBigDecimal()
 			}
 		}
 	}

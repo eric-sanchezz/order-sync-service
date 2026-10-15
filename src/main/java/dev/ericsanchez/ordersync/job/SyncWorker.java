@@ -13,6 +13,7 @@ import java.util.function.BooleanSupplier;
 import dev.ericsanchez.ordersync.config.OrderSyncProperties;
 import dev.ericsanchez.ordersync.erp.ErpClient;
 import dev.ericsanchez.ordersync.erp.ErpResult;
+import dev.ericsanchez.ordersync.events.DomainEvents;
 import dev.ericsanchez.ordersync.observability.SyncMetrics;
 import dev.ericsanchez.ordersync.retry.BackoffPolicy;
 import dev.ericsanchez.ordersync.transform.ErpOrder;
@@ -25,10 +26,14 @@ import tools.jackson.databind.json.JsonMapper;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Claims due jobs and syncs each one to the ERP on its own virtual thread. Three short steps per job, none holding a
  * transaction across the network: (1) claim with a lease, (2) HTTP call, (3) store the result guarded by the lease.
+ * Step 3 for DONE and DEAD also records the domain event (OrderSynced / OrderFailed) in the outbox, in the same
+ * transaction as the status change.
  */
 @Component
 public class SyncWorker {
@@ -51,9 +56,13 @@ public class SyncWorker {
 
 	private final SyncMetrics metrics;
 
+	private final DomainEvents events;
+
+	private final TransactionTemplate transactions;
+
 	public SyncWorker(SyncJobRepository jobs, CustomerMappingRepository customers, ErpClient erpClient,
 			BackoffPolicy backoff, JsonMapper jsonMapper, Clock clock, OrderSyncProperties properties,
-			SyncMetrics metrics) {
+			SyncMetrics metrics, DomainEvents events, PlatformTransactionManager transactionManager) {
 		this.jobs = jobs;
 		this.customers = customers;
 		this.erpClient = erpClient;
@@ -62,6 +71,8 @@ public class SyncWorker {
 		this.clock = clock;
 		this.properties = properties;
 		this.metrics = metrics;
+		this.events = events;
+		this.transactions = new TransactionTemplate(transactionManager);
 	}
 
 	/** Claims up to {@code batch-size} due jobs and returns once all of them have been processed. */
@@ -130,28 +141,28 @@ public class SyncWorker {
 		catch (RuntimeException ex) {
 			result = new ErpResult.Retryable("unexpected error: " + ex);
 		}
-		recordResult(job, result);
+		recordResult(job, order, result);
 	}
 
-	private void recordResult(ClaimedJob job, ErpResult result) {
+	private void recordResult(ClaimedJob job, ErpOrder order, ErpResult result) {
 		OffsetDateTime now = now();
 		int attempts = job.attempts() + 1;
 		switch (result) {
 			case ErpResult.Success success -> {
 				log.info("Job {} ({}) DONE, ERP order {}", job.id(), job.eventId(), success.orderId());
 				store(job, attempts, "the ERP accepted the order",
-						() -> this.jobs.markDone(job, attempts, success.orderId(), now));
+						() -> markDone(job, attempts, success.orderId(), order, now));
 			}
 			case ErpResult.Permanent permanent -> {
 				log.warn("Job {} ({}) DEAD: {}", job.id(), job.eventId(), permanent.error());
 				countDead(store(job, attempts, "the ERP rejected the order",
-						() -> this.jobs.markDead(job, attempts, permanent.error(), now)));
+						() -> markDead(job, attempts, permanent.error(), now)));
 			}
 			case ErpResult.Retryable retryable when attempts >= this.properties.retry().maxAttempts() -> {
 				log.warn("Job {} ({}) DEAD after {} attempts: {}", job.id(), job.eventId(), attempts,
 						retryable.error());
 				countDead(store(job, attempts, "the ERP call failed",
-						() -> this.jobs.markDead(job, attempts, retryable.error(), now)));
+						() -> markDead(job, attempts, retryable.error(), now)));
 			}
 			case ErpResult.Retryable retryable -> {
 				Duration delay = this.backoff.delay(attempts);
@@ -176,7 +187,7 @@ public class SyncWorker {
 	private void finishDead(ClaimedJob job, int attempts, String reason) {
 		log.warn("Job {} ({}) DEAD: {}", job.id(), job.eventId(), reason);
 		countDead(store(job, attempts, "the order could not be sent",
-				() -> this.jobs.markDead(job, attempts, reason, now())));
+				() -> markDead(job, attempts, reason, now())));
 	}
 
 	private void countDead(boolean stored) {
@@ -208,11 +219,38 @@ public class SyncWorker {
 		catch (DataIntegrityViolationException ex) {
 			log.error("Job {} ({}): {} but the result could not be stored; marking it DEAD", job.id(), job.eventId(),
 					outcome, ex);
-			countDead(this.jobs.markDead(job, attempts, "result could not be stored (" + outcome + "): "
+			countDead(markDead(job, attempts, "result could not be stored (" + outcome + "): "
 					+ ex.getMostSpecificCause().getClass().getSimpleName()
 					+ ". Check the ERP before replaying this job.", now()));
 			return false;
 		}
+	}
+
+	/** DONE and its OrderSynced event, in one transaction: both or neither (ADR 0006). */
+	private boolean markDone(ClaimedJob job, int attempts, String erpOrderId, ErpOrder order, OffsetDateTime now) {
+		return inTransaction(() -> {
+			if (!this.jobs.markDone(job, attempts, erpOrderId, now)) {
+				return false;
+			}
+			this.events.orderSynced(job.id(), job.shopOrderId(), job.eventId(), erpOrderId, order.totalAmountCents(),
+					order.currency(), now);
+			return true;
+		});
+	}
+
+	/** DEAD and its OrderFailed event, in one transaction. Every path to DEAD goes through here. */
+	private boolean markDead(ClaimedJob job, int attempts, String reason, OffsetDateTime now) {
+		return inTransaction(() -> {
+			if (!this.jobs.markDead(job, attempts, reason, now)) {
+				return false;
+			}
+			this.events.orderFailed(job.id(), job.shopOrderId(), job.eventId(), reason, attempts, now);
+			return true;
+		});
+	}
+
+	private boolean inTransaction(BooleanSupplier work) {
+		return Boolean.TRUE.equals(this.transactions.execute((status) -> work.getAsBoolean()));
 	}
 
 	private static void logLostLease(ClaimedJob job) {

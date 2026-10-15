@@ -50,7 +50,7 @@ public class DatabaseGauges implements MeterBinder, SchedulingConfigurer, Dispos
 
 	/** Taken once per refresh; {@code refreshedAt} is null until the first refresh succeeds. */
 	private record Snapshot(Map<String, Long> jobs, Map<String, Long> outbox, double oldestPendingAgeSeconds,
-			Instant refreshedAt) {
+			double eventsPending, double oldestEventAgeSeconds, double blockedEventKeys, Instant refreshedAt) {
 	}
 
 	private final HikariDataSource metricsDataSource;
@@ -64,7 +64,7 @@ public class DatabaseGauges implements MeterBinder, SchedulingConfigurer, Dispos
 	private final Instant startedAt;
 
 	private final AtomicReference<Snapshot> snapshot = new AtomicReference<>(
-			new Snapshot(Map.of(), Map.of(), Double.NaN, null));
+			new Snapshot(Map.of(), Map.of(), Double.NaN, Double.NaN, Double.NaN, Double.NaN, null));
 
 	public DatabaseGauges(JdbcConnectionDetails connectionDetails, Clock clock, OrderSyncProperties properties) {
 		Duration timeout = properties.metrics().dbQueryTimeout();
@@ -110,6 +110,17 @@ public class DatabaseGauges implements MeterBinder, SchedulingConfigurer, Dispos
 			.description("Age of the oldest job still waiting to be synced (PENDING or RETRY); 0 if none")
 			.baseUnit("seconds")
 			.register(registry);
+		Gauge.builder("ordersync.events.outbox.pending", this, (gauges) -> gauges.snapshot.get().eventsPending())
+			.description("Domain events in the outbox not yet acknowledged by Kafka (PENDING, RETRY or IN_PROGRESS)")
+			.register(registry);
+		Gauge.builder("ordersync.events.outbox.oldest.age", this,
+				(gauges) -> gauges.snapshot.get().oldestEventAgeSeconds())
+			.description("Age of the oldest domain event not yet acknowledged by Kafka (the publishing lag); 0 if none")
+			.baseUnit("seconds")
+			.register(registry);
+		Gauge.builder("ordersync.events.blocked.keys", this, (gauges) -> gauges.snapshot.get().blockedEventKeys())
+			.description("Keys (orders, SKUs) with a DEAD domain event: their newer events wait until it is replayed")
+			.register(registry);
 		Gauge.builder("ordersync.db.snapshot.age", this, DatabaseGauges::snapshotAgeSeconds)
 			.description("Seconds since the database gauges were last refreshed; grows while the database is unreachable")
 			.baseUnit("seconds")
@@ -129,6 +140,15 @@ public class DatabaseGauges implements MeterBinder, SchedulingConfigurer, Dispos
 					UNION ALL
 					SELECT 'age', NULL, coalesce(extract(EPOCH FROM (:now - min(created_at))), 0)::float8
 					FROM sync_job WHERE status IN ('PENDING', 'RETRY')
+					UNION ALL
+					SELECT 'events', NULL, count(*)::float8
+					FROM outbox_message WHERE destination = 'KAFKA' AND status IN ('PENDING', 'RETRY', 'IN_PROGRESS')
+					UNION ALL
+					SELECT 'events_age', NULL, coalesce(extract(EPOCH FROM (:now - min(created_at))), 0)::float8
+					FROM outbox_message WHERE destination = 'KAFKA' AND status IN ('PENDING', 'RETRY', 'IN_PROGRESS')
+					UNION ALL
+					SELECT 'events_blocked', NULL, count(DISTINCT (aggregate_type, aggregate_id))::float8
+					FROM outbox_message WHERE destination = 'KAFKA' AND status = 'DEAD'
 					""")
 				.param("now", now)
 				.query((rs, rowNum) -> new Row(rs.getString("kind"), rs.getString("status"), rs.getDouble("value")))
@@ -136,14 +156,21 @@ public class DatabaseGauges implements MeterBinder, SchedulingConfigurer, Dispos
 			Map<String, Long> jobs = new HashMap<>();
 			Map<String, Long> outbox = new HashMap<>();
 			double age = 0;
+			double eventsPending = 0;
+			double eventsAge = 0;
+			double eventsBlocked = 0;
 			for (Row row : rows) {
 				switch (row.kind()) {
 					case "job" -> jobs.put(row.status(), (long) row.value());
 					case "outbox" -> outbox.put(row.status(), (long) row.value());
-					default -> age = row.value();
+					case "age" -> age = row.value();
+					case "events" -> eventsPending = row.value();
+					case "events_age" -> eventsAge = row.value();
+					default -> eventsBlocked = row.value();
 				}
 			}
-			this.snapshot.set(new Snapshot(Map.copyOf(jobs), Map.copyOf(outbox), age, now.toInstant()));
+			this.snapshot.set(new Snapshot(Map.copyOf(jobs), Map.copyOf(outbox), age, eventsPending, eventsAge,
+					eventsBlocked, now.toInstant()));
 		}
 		catch (DataAccessException ex) {
 			log.warn("Could not refresh the database gauges; keeping the snapshot from {}: {}",

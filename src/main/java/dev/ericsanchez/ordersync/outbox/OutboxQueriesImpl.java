@@ -54,9 +54,13 @@ class OutboxQueriesImpl implements OutboxQueries {
 
 	/**
 	 * Claims due messages, in order per key (head-of-line): a message is only eligible if no older message with the
-	 * same (aggregate_id, destination) is still PENDING, RETRY or IN_PROGRESS. Only the oldest active message of a
-	 * key can pass that test, so a batch never holds two messages of the same key, and a key whose head is waiting
-	 * for a retry blocks only itself. DEAD, DELIVERED and SUPERSEDED messages do not block.
+	 * same (aggregate_type, aggregate_id, destination) is still PENDING, RETRY or IN_PROGRESS. The type is part of
+	 * the key: order 1001 and the SKU "1001" share KAFKA but are different aggregates. Only the oldest active message
+	 * of a key can pass that test, so a batch never holds two messages of the same key, and a key whose head is waiting
+	 * for a retry blocks only itself. DELIVERED and SUPERSEDED messages do not block. A DEAD message blocks its key
+	 * only for KAFKA: an event published after a newer one of its key would leave consumers on a stale state, so the
+	 * key waits until the DEAD event is replayed (ADR 0006). For the shop, the stock level is absolute and the
+	 * staleness guard covers a late replay, so a DEAD message does not hold up newer ones.
 	 * <p>
 	 * Expired leases are claimed again and count an attempt (the previous relay probably called the destination and
 	 * lost the result), as for sync jobs. SKIP LOCKED lets several relays claim concurrently.
@@ -71,10 +75,12 @@ class OutboxQueriesImpl implements OutboxQueries {
 				               WHERE ((c.status IN ('PENDING', 'RETRY') AND c.next_attempt_at <= :now)
 				                      OR (c.status = 'IN_PROGRESS' AND c.locked_until < :now))
 				                 AND NOT EXISTS (SELECT 1 FROM outbox_message older
-				                                 WHERE older.aggregate_id = c.aggregate_id
+				                                 WHERE older.aggregate_type = c.aggregate_type
+				                                   AND older.aggregate_id = c.aggregate_id
 				                                   AND older.destination = c.destination
 				                                   AND older.id < c.id
-				                                   AND older.status IN ('PENDING', 'RETRY', 'IN_PROGRESS'))
+				                                   AND (older.status IN ('PENDING', 'RETRY', 'IN_PROGRESS')
+				                                        OR (older.destination = 'KAFKA' AND older.status = 'DEAD')))
 				               ORDER BY c.next_attempt_at, c.id
 				               LIMIT :batchSize
 				               FOR UPDATE SKIP LOCKED)

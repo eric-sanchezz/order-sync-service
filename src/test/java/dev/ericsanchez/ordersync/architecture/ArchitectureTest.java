@@ -91,7 +91,8 @@ class ArchitectureTest {
 		slices().matching(BASE + ".(*)..").should().beFreeOfCycles().check(MAIN_CLASSES);
 	}
 
-	// Money is long cents in the packages that carry it (shop order in, transformation, ERP order out). Checked:
+	// Money is long cents in the packages that carry it (shop order in, transformation, ERP order out, domain events
+	// such as OrderSynced with its total). Checked:
 	// Double, Float and BigDecimal anywhere in the dependencies (fields, signatures, generics, calls), and the
 	// primitives double/float in fields, signatures and in the signature of any method called or field accessed
 	// (Math.round(double), Long.doubleValue()). java.text.NumberFormat and its subclasses (DecimalFormat) are banned
@@ -104,7 +105,7 @@ class ArchitectureTest {
 	@Test
 	void moneyIsNeverFloatingPointOrBigDecimal() {
 		noClasses().that()
-			.resideInAnyPackage(BASE + ".transform..", BASE + ".erp..", BASE + ".webhook..")
+			.resideInAnyPackage(BASE + ".transform..", BASE + ".erp..", BASE + ".webhook..", BASE + ".events..")
 			.should()
 			.dependOnClassesThat()
 			.belongToAnyOf(Double.class, Float.class, BigDecimal.class)

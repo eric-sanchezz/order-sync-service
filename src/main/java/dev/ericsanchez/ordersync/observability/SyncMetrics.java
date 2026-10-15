@@ -61,6 +61,42 @@ public class SyncMetrics {
 	}
 
 	/**
+	 * Registers the event counters at 0 for every event type, so that the series exist (and dashboards show 0, not
+	 * "no data") before the first event is published or fails.
+	 */
+	public void registerEventTypes(Iterable<String> eventTypes) {
+		for (String type : eventTypes) {
+			eventsPublished(type);
+			eventsFailed(type, "retryable");
+			eventsFailed(type, "permanent");
+		}
+	}
+
+	public void eventPublished(String type) {
+		eventsPublished(type).increment();
+	}
+
+	/** {@code outcome}: retryable (the relay tries again later) or permanent (the message goes DEAD). */
+	public void eventFailed(String type, String outcome) {
+		eventsFailed(type, outcome).increment();
+	}
+
+	private Counter eventsPublished(String type) {
+		return Counter.builder("ordersync.events.published")
+			.description("Domain events acknowledged by Kafka (acks=all)")
+			.tag("type", type)
+			.register(this.registry);
+	}
+
+	private Counter eventsFailed(String type, String outcome) {
+		return Counter.builder("ordersync.events.failed")
+			.description("Attempts to publish a domain event that Kafka did not acknowledge")
+			.tag("type", type)
+			.tag("outcome", outcome)
+			.register(this.registry);
+	}
+
+	/**
 	 * @param source shop or erp
 	 * @param result accepted, duplicate, unauthorized, bad_request, stale (erp) or conflict (shop, order in flight)
 	 */

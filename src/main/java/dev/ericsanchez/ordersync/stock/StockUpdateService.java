@@ -6,6 +6,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
+import dev.ericsanchez.ordersync.events.DomainEvents;
 import dev.ericsanchez.ordersync.outbox.OutboxDestination;
 import dev.ericsanchez.ordersync.outbox.OutboxRepository;
 import tools.jackson.databind.json.JsonMapper;
@@ -32,13 +33,16 @@ public class StockUpdateService {
 
 	private final Clock clock;
 
+	private final DomainEvents events;
+
 	public StockUpdateService(JdbcClient jdbc, StockLevelRepository stockLevels, OutboxRepository outbox,
-			JsonMapper jsonMapper, Clock clock) {
+			JsonMapper jsonMapper, Clock clock, DomainEvents events) {
 		this.jdbc = jdbc;
 		this.stockLevels = stockLevels;
 		this.outbox = outbox;
 		this.jsonMapper = jsonMapper;
 		this.clock = clock;
+		this.events = events;
 	}
 
 	public sealed interface UpdateResult {
@@ -80,6 +84,9 @@ public class StockUpdateService {
 		long outboxId = this.outbox.enqueue(StockLevelChanged.AGGREGATE_TYPE, change.articleCode(),
 				StockLevelChanged.EVENT_TYPE, OutboxDestination.SHOP_STOCK_API,
 				this.jsonMapper.writeValueAsString(change), now);
+		// The domain event is history, not state: it is never superseded (ADR 0006).
+		this.events.stockUpdated(change.articleCode(), change.quantityAvailable(), change.warehouse(),
+				change.changedAt(), eventId, now);
 		return new Accepted(outboxId);
 	}
 

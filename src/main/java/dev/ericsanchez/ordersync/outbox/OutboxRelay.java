@@ -88,15 +88,15 @@ public class OutboxRelay {
 	}
 
 	private void process(ClaimedMessage message) {
-		if (message.attempts() >= this.properties.retry().maxAttempts()) {
-			// Only reachable through expired leases: each one counts as an attempt whose result was lost.
-			finishDead(message, message.attempts(),
-					"gave up after " + message.attempts() + " attempts without a stored result (lease expired)");
-			return;
-		}
 		OutboxDispatcher dispatcher = this.dispatchers.get(message.destination());
 		if (dispatcher == null) {
 			finishDead(message, message.attempts(), "no dispatcher for destination " + message.destination());
+			return;
+		}
+		if (!dispatcher.retriesUntilDelivered() && message.attempts() >= this.properties.retry().maxAttempts()) {
+			// Only reachable through expired leases: each one counts as an attempt whose result was lost.
+			finishDead(message, message.attempts(),
+					"gave up after " + message.attempts() + " attempts without a stored result (lease expired)");
 			return;
 		}
 		DeliveryResult result;
@@ -106,10 +106,10 @@ public class OutboxRelay {
 		catch (RuntimeException ex) {
 			result = new DeliveryResult.Retryable("unexpected error: " + ex);
 		}
-		recordResult(message, result);
+		recordResult(message, result, dispatcher.retriesUntilDelivered());
 	}
 
-	private void recordResult(ClaimedMessage message, DeliveryResult result) {
+	private void recordResult(ClaimedMessage message, DeliveryResult result, boolean retriesUntilDelivered) {
 		OffsetDateTime now = now();
 		int attempts = message.attempts() + 1;
 		switch (result) {
@@ -132,7 +132,8 @@ public class OutboxRelay {
 				store(message, attempts, "the destination rejected the message",
 						() -> this.messages.markDead(message, attempts, permanent.error(), now));
 			}
-			case DeliveryResult.Retryable retryable when attempts >= this.properties.retry().maxAttempts() -> {
+			case DeliveryResult.Retryable retryable
+					when !retriesUntilDelivered && attempts >= this.properties.retry().maxAttempts() -> {
 				log.warn("Outbox message {} ({} {}) DEAD after {} attempts: {}", message.id(), message.destination(),
 						message.aggregateId(), attempts, retryable.error());
 				store(message, attempts, "the delivery failed",

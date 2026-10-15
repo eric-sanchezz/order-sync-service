@@ -30,7 +30,8 @@ public record OrderSyncProperties(
 		@Valid @NotNull Shop shop,
 		@Valid @NotNull Outbox outbox,
 		@Valid @NotNull Stock stock,
-		@Valid @NotNull Metrics metrics) {
+		@Valid @NotNull Metrics metrics,
+		@Valid @NotNull Events events) {
 
 	public record Webhook(@NotBlank String secret) {
 	}
@@ -95,6 +96,19 @@ public record OrderSyncProperties(
 
 	public record Outbox(boolean relayEnabled, @NotNull Duration pollInterval, @Min(1) int batchSize,
 			@NotNull Duration lease) {
+	}
+
+	public record Events(@Valid @NotNull Kafka kafka) {
+	}
+
+	/**
+	 * Domain events published to Kafka through the outbox. With {@code enabled=false} no event is written (and no
+	 * topic is created); messages already in the outbox are still published. {@code sendTimeout} bounds the wait
+	 * for the broker's acknowledgement of one event; it must exceed the producer's {@code delivery.timeout.ms}.
+	 * The circuit breaker {@code kafka} only counts retryable failures (broker away, timeouts).
+	 */
+	public record Kafka(boolean enabled, @NotBlank String ordersTopic, @NotBlank String stockTopic,
+			@Min(1) int partitions, @NotNull Duration sendTimeout, @Valid @NotNull CircuitBreaker circuitBreaker) {
 	}
 
 }

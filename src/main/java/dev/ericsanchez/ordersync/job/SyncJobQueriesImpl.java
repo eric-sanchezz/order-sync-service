@@ -42,12 +42,13 @@ class SyncJobQueriesImpl implements SyncJobQueries {
 				               ORDER BY next_attempt_at
 				               LIMIT :batchSize
 				               FOR UPDATE SKIP LOCKED)
-				RETURNING j.id, j.event_id, j.attempts, j.locked_until, e.payload
+				RETURNING j.id, j.event_id, j.shop_order_id, j.attempts, j.locked_until, e.payload
 				""")
 			.param("now", now)
 			.param("lockedUntil", lockedUntil)
 			.param("batchSize", batchSize)
-			.query((rs, rowNum) -> new ClaimedJob(rs.getLong("id"), rs.getString("event_id"), rs.getInt("attempts"),
+			.query((rs, rowNum) -> new ClaimedJob(rs.getLong("id"), rs.getString("event_id"),
+					rs.getObject("shop_order_id", Long.class), rs.getInt("attempts"),
 					rs.getObject("locked_until", OffsetDateTime.class), rs.getString("payload")))
 			.list();
 	}

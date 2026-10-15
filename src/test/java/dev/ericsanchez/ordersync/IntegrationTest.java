@@ -87,7 +87,10 @@ public abstract class IntegrationTest {
 
 	@BeforeEach
 	void resetSharedState() {
-		this.jdbc.sql("TRUNCATE sync_job, inbox_event, outbox_message, erp_inbox_event, stock_level RESTART IDENTITY")
+		this.jdbc.sql("""
+				TRUNCATE sync_job, inbox_event, outbox_message, erp_inbox_event, stock_level, event_sequence
+				RESTART IDENTITY
+				""")
 			.update();
 		this.erp = new WireMock(this.erpMockContainer.getHost(),
 				this.erpMockContainer.getMappedPort(TestcontainersConfiguration.WIREMOCK_PORT));
