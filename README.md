@@ -1,7 +1,8 @@
 # order-sync-service
 
 Takes orders from a B2B web shop and creates them in an ERP, and pushes the ERP's stock levels back to the shop,
-without losing or duplicating anything, even when the other side is slow, down, or rejecting requests.
+without losing or duplicating anything, even when the other side is slow, down, or rejecting requests. What happened
+(order synced, order failed, stock updated) is published to Kafka as domain events, through the same outbox.
 
 This is the kind of integration I usually build with n8n. Here it is written by hand in Java 25 and Spring Boot 4.1,
 so every guarantee n8n gives you (and a few it doesn't) is explicit code with a test behind it. All data
@@ -38,6 +39,13 @@ flowchart LR
         Relay[Outbox relay<br/>in order per SKU] -- "claim: head-of-line + SKIP LOCKED" --> Tx
         Relay -- "PUT .../by-sku/SKU/stock<br/>Idempotency-Key outbox-id, breaker shop" --> ShopApi[Shop stock API]
     end
+    subgraph Events [Domain events: to Kafka]
+        Ev[(outbox_message<br/>destination KAFKA)]
+        Relay -- "key = shop order id / SKU<br/>acks=all, idempotent producer" --> Kafka[Kafka<br/>ordersync.orders.v1<br/>ordersync.stock.v1]
+    end
+    Worker -- "DONE / DEAD + OrderSynced / OrderFailed<br/>one transaction" --> Ev
+    SW -- "+ StockUpdated, same transaction" --> Ev
+    Relay -- "claim: head-of-line + SKIP LOCKED" --> Ev
     Admin[Operator] -- "X-API-Key: jobs, outbox, replay, stats" --> Job
     Admin --> Tx
 ```
@@ -99,10 +107,60 @@ checks. The only business rule is that the sum of the lines must equal the order
 4. **Admin API**: `GET /admin/outbox?status=`, `GET /admin/outbox/{id}`, `POST /admin/outbox/{id}/replay`
    (only `DEAD`, otherwise 409).
 
+### Domain events: to Kafka (through the outbox)
+
+Three events, each written to `outbox_message` (destination `KAFKA`) **in the same transaction** as the change it
+reports, and published by the same relay. Kafka is never called inside a business transaction, so there is no dual
+write: no `DONE` without its event, no event for a change that was rolled back
+([ADR 0006](docs/adr/0006-domain-events-to-kafka-via-outbox.md)).
+
+| Event | Written when | Topic | Key |
+|---|---|---|---|
+| `OrderSynced` | a job reaches `DONE` | `ordersync.orders.v1` | shop order id |
+| `OrderFailed` | a job reaches `DEAD` (every path: ERP rejection, attempts used up, invalid order...) | `ordersync.orders.v1` | shop order id |
+| `StockUpdated` | an ERP stock change is applied (not stale, not a duplicate) | `ordersync.stock.v1` | article code (SKU) |
+
+- **Format** (JSON, version 1; fields are only ever added, a breaking change means a `.v2` topic): `eventId` (UUID),
+  `type`, `aggregateId` (= the key), `sequence`, `occurredAt` (when the change was committed, UTC), `version`,
+  `correlationId` (the webhook event id that started it) and `payload`. Headers: `eventId`, `eventType`,
+  `correlationId`.
+- **`sequence`**: 1, 2, 3... per aggregate (per order, per SKU), taken in the same transaction as the event from a
+  per-aggregate counter whose row lock makes a second writer wait. It follows the order in which the changes were
+  committed, which is also the order in which they are published.
+- **What a consumer must do**: deduplicate by `eventId`, and for each aggregate keep the highest `sequence` seen and
+  drop any event with a lower or equal one. Both cases happen: an event can arrive twice (below), and a replayed event
+  keeps its `sequence`.
+- **Order per key**: the record key is the shop order id or the SKU, so all events of one order or one SKU land in
+  the same partition; the relay only publishes an event once the older ones of its key are out (head-of-line, as for
+  the shop). `StockUpdated` is never `SUPERSEDED`: events are history, not state, so both of two quick changes are
+  published while the shop only gets the newest quantity.
+- **At least once**: the producer uses `acks=all` and idempotence, so the broker drops the producer's own retries.
+  But if the acknowledgement is lost, the relay sends the event again, and a consumer can see it twice. This happens:
+  in a real run with Kafka paused for 97 s (`docker compose pause kafka`), one `OrderSynced` was stored twice, at
+  consecutive offsets, with the same `eventId` and `sequence`.
+- **Kafka down**: nothing goes `DEAD`. Failures that can heal (broker away, timeouts, not enough replicas) are
+  retried with backoff (2 s doubling up to a 5 min cap) for as long as it takes, and once the `kafka` circuit breaker
+  opens, the refused calls do not even count as attempts. In that same run, the event failed 6 times, the breaker
+  opened, and it was published 57 s after Kafka came back (its next retry was due then). Meanwhile it shows up as lag
+  (`ordersync_events_outbox_oldest_age_seconds`), never as a `DEAD` message.
+- **`DEAD` blocks its key**: only an event Kafka can never take (too large, not serializable, invalid topic, not
+  authorized) goes `DEAD`. Unlike the shop's messages, a `DEAD` event holds back every newer event of its key, so a
+  consumer can never see an older fact after a newer one (a key is one order or one SKU: order 1001 and a SKU "1001"
+  do not block each other). The key stays blocked until the event is replayed (`POST /admin/outbox/{id}/replay`) once
+  the cause is fixed; `lastError` in `GET /admin/outbox/{id}` names the cause Kafka gave (e.g.
+  `RecordTooLargeException: The message is 456 bytes ...`). If a key has several `DEAD` events, replay the oldest
+  first: a newer one waits behind it anyway. `ordersync_events_blocked_keys` counts the blocked keys.
+- **Alerts worth setting**: `ordersync_events_blocked_keys > 0` for 5 minutes (someone has to look and replay);
+  `ordersync_events_outbox_oldest_age_seconds` above a few minutes (Kafka unreachable or slow); the `kafka` breaker
+  not `closed` (`resilience4j_circuitbreaker_state{name="kafka",state="closed"} == 0`).
+- `EVENTS_KAFKA_ENABLED=false` stops writing events (and creating topics); events already in the outbox are still
+  published.
+
 ## Run it
 
 You need Docker. One command starts Postgres, the service, a WireMock "unstable ERP" (port 8089), a WireMock shop
-stock API (port 8090, always answers 200), Prometheus (port 9090) and Grafana (port 3000):
+stock API (port 8090, always answers 200), Kafka (KRaft, one node, port 9092), kafka-ui (port 8085), Prometheus
+(port 9090) and Grafana (port 3000):
 
 ```bash
 docker compose up --build -d
@@ -143,16 +201,37 @@ Stock, from the ERP to the shop:
 
 ```bash
 ./scripts/send-stock-update.sh scripts/sample-stock-update.json stock-1
-# -> {"outboxId":1,"status":"PENDING"}  HTTP 202
+# -> {"outboxId":4,"status":"PENDING"}  HTTP 202
+# (the id depends on how many order events the outbox already holds: 4 if you ran the commands above in order)
 
 # The same event id again: 200 {"duplicate":true}. A change older than the stored one: 200 {"stale":true}
 # (edit changedAt in a copy of the file to an earlier time to see it). An equal changedAt is applied again.
 ./scripts/send-stock-update.sh scripts/sample-stock-update.json stock-1
 
+# The outbox holds the shop's stock message and the Kafka events (destination KAFKA):
 curl -s -H "X-API-Key: dev-admin-key" localhost:8080/admin/outbox
-# What the shop received (Idempotency-Key: outbox-1, Authorization: Bearer ...):
+# What the shop received (Idempotency-Key: outbox-<that id>, Authorization: Bearer ...):
 curl -s localhost:8090/__admin/requests
 ```
+
+The events, as a consumer sees them (or open kafka-ui at <http://localhost:8085>). In Git Bash, prefix the command
+with `MSYS_NO_PATHCONV=1` so that `/opt/...` is not rewritten as a Windows path:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic ordersync.orders.v1 --from-beginning --timeout-ms 5000 \
+  --formatter-property print.key=true --formatter-property print.headers=true
+```
+
+The `OrderSynced` of `demo-1`, copied from a real run (headers, key, value):
+
+```
+eventId:919e9f03-a30e-47c8-8a17-4e344a7dfb40,eventType:OrderSynced,correlationId:demo-1	1001	{"eventId":"919e9f03-a30e-47c8-8a17-4e344a7dfb40","type":"OrderSynced","aggregateId":"1001","sequence":1,"occurredAt":"2026-10-15T13:21:39.837474Z","version":1,"correlationId":"demo-1","payload":{"shopOrderId":1001,"jobId":1,"erpOrderId":"ERP-44329070","totalAmountCents":15000,"currency":"EUR"}}
+```
+
+The same run also had two `OrderFailed` for order 1002 (`demo-2` going `DEAD`, with `sequence` 1, then again after
+its replay, with `sequence` 2) and, on `ordersync.stock.v1`, the `StockUpdated` of `stock-1` with key
+`TORN-M6-100`.
 
 Both scripts sign the file with `openssl dgst -sha256 -hmac` and send exactly those bytes with
 `curl --data-binary`. API docs: <http://localhost:8080/swagger-ui.html>.
@@ -180,6 +259,9 @@ The `dev-*` secrets in `docker-compose.yml` are demo values. Configuration comes
 | `MANAGEMENT_PORT` | `8081` | Actuator port (health, Prometheus scrape) |
 | `METRICS_DB_REFRESH_INTERVAL`, `METRICS_DB_QUERY_TIMEOUT` | `15s`, `2s` | Background refresh of the database gauges |
 | `LOGGING_STRUCTURED_FORMAT_CONSOLE` | (plain text) | `ecs` for JSON logs (set in docker-compose) |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka brokers (`kafka:29092` in docker-compose) |
+| `EVENTS_KAFKA_ENABLED` | `true` | Write domain events to the outbox (and create the topics at startup) |
+| `EVENTS_KAFKA_SEND_TIMEOUT` | `15s` | How long one publish waits for Kafka's acknowledgement |
 
 Retries, backoff and `CB_WAIT_OPEN` apply to both directions. The service refuses to start if a secret, the API key
 or the shop token is blank.
@@ -187,27 +269,32 @@ or the shop token is blank.
 ## Observability
 
 Open <http://localhost:3000> (anonymous read-only access). The provisioned dashboard **order-sync-service** shows:
-jobs by status, orders synced per second, ERP latency p50/p95, retries per second, the state of the `erp` and `shop`
-circuit breakers, the age of the oldest pending job, outbox messages by status, webhooks by result, and how fresh the
-database numbers are.
+jobs by status, orders synced per second, ERP latency p50/p95, retries per second, the state of the `erp`, `shop`
+and `kafka` circuit breakers, the age of the oldest pending job, outbox messages by status, webhooks by result, how fresh the
+database numbers are, and the Kafka events: published and failed per second, how many are waiting in the outbox and
+the age of the oldest one (the publishing lag), and the keys blocked by a `DEAD` event.
 
 ![Grafana dashboard of order-sync-service after about 20 minutes of demo traffic](docs/images/grafana-dashboard.png)
 
 *A real run: about 80 orders and about 10 stock updates. 7 orders ended `DEAD`: 6 on purpose (a customer the ERP
 doesn't know) and 1 because the stateful ERP mock answers 404 "not matched" to concurrent calls, a limitation of the
 mock itself. Around 18:37 the ERP mock failed for a few minutes: the `erp` breaker opened, orders waited in `RETRY`
-(the "oldest pending job" peak), and all of them reached `DONE` once it answered again.*
+(the "oldest pending job" peak), and all of them reached `DONE` once it answered again. Captured before the Kafka
+panels were added.*
 
 - **Metrics** (Micrometer, scraped by Prometheus every 5 s):
   - `ordersync_jobs{status}`, `ordersync_outbox_messages{status}` and `ordersync_jobs_oldest_pending_age_seconds`
     are gauges read **from Postgres**. The queue lives there, so they are exact, survive restarts, and agree across
     instances. They are refreshed in the background every 15 s, with one query on a separate connection and a 2 s
     timeout, so a scrape never touches the database and stays fast even while it is down.
-    `ordersync_db_snapshot_age_seconds` says how old those numbers are.
+    `ordersync_db_snapshot_age_seconds` says how old those numbers are. Same for the Kafka events not yet
+    published: `ordersync_events_outbox_pending`, `ordersync_events_outbox_oldest_age_seconds` and
+    `ordersync_events_blocked_keys`.
   - Counters and timers: `ordersync_erp_requests_seconds{outcome}` and `ordersync_shop_requests_seconds{outcome}`
-    (with histograms for percentiles), `ordersync_jobs_retries_total`, `ordersync_jobs_dead_total` and
-    `ordersync_webhook_received_total{source,result}`.
-  - `resilience4j_circuitbreaker_state{name,state}` for both breakers.
+    (with histograms for percentiles), `ordersync_jobs_retries_total`, `ordersync_jobs_dead_total`,
+    `ordersync_webhook_received_total{source,result}`, `ordersync_events_published_total{type}` and
+    `ordersync_events_failed_total{type,outcome}`.
+  - `resilience4j_circuitbreaker_state{name,state}` for the three breakers (`erp`, `shop`, `kafka`).
 - **Health**: the `erp` and `shop` components report the state of their circuit breaker. Any state other than
   `CLOSED` is `DEGRADED`, which still answers 200. An ERP outage is not an outage of this service, which keeps
   accepting and queueing work. Liveness (used by the Docker healthcheck) only checks that the process answers, so a
@@ -278,7 +365,8 @@ Environment: Windows 11 Home with Docker Desktop 4.95 (16 CPUs), one instance of
 (30 s by default) so the queue recovers within a three-minute test; everything else is the default configuration.
 The ERP mock answers 201 after 50-800 ms through a dedicated stub, because WireMock's stateful `503, 201, 201`
 scenario of the demo answers 404 to concurrent calls. The script removes its stubs at the end, so the demo behaves as
-in "Try it" again.
+in "Try it" again. The runs were made before the Kafka events existed (H6): the stack had no Kafka then, and
+`docker compose up` now also starts it.
 
 To reproduce (tested on Windows 11 with Git Bash and Docker Desktop; needs Docker and curl):
 
@@ -306,6 +394,7 @@ k6 lives in the compose profile `load`, so a plain `docker compose up` never sta
 | Save a change and notify another system | Two nodes in a row: if the second fails, the first has already happened | Transactional outbox: the stock level and the message to the shop are stored in one transaction, then a relay delivers them with retries |
 | Seeing what is going on | Execution list per workflow | Prometheus metrics from the database (queue by status, oldest pending job), latency histograms, circuit breaker state, a provisioned Grafana dashboard, JSON logs with correlation ids |
 | Updates arriving out of order | The last execution wins, even if its data is older | `changedAt` compared on arrival and again before sending; delivery in order per SKU; older unsent messages `SUPERSEDED` |
+| Telling other systems what happened | A Kafka node at the end of the workflow: if it fails after the ERP call, the event is lost (or the workflow is re-run and the ERP called again) | Domain events written to the outbox in the same transaction as the state change, published to Kafka with retries until Kafka takes them, keyed per order / SKU so each keeps its order; at least once, with an `eventId` to deduplicate and a per-aggregate `sequence` to drop stale ones |
 
 ## Testing
 
@@ -356,6 +445,19 @@ what can be observed from outside: HTTP responses, rows in the database, and the
 | A breaker forced open | its `resilience4j_circuitbreaker_state` series reports it; health component `DEGRADED`, overall 200, liveness `UP` |
 | Management port | health and prometheus 200; any other actuator path 401; on the application port, `/actuator/*` is 401 |
 | Correlation ids | worker and webhook log lines carry `eventId` / `jobId` from the MDC |
+| Order synced (real Kafka broker, read back with a plain consumer) | `OrderSynced` on `ordersync.orders.v1`, key = shop order id, headers `eventId`/`eventType`/`correlationId`, envelope and payload as documented |
+| ERP 422 | `OrderFailed` with the `HTTP 422` reason and 1 attempt |
+| Two changes of one SKU before the relay runs | both `StockUpdated` published, in order; the shop gets 1 PUT, the newest |
+| Two events of one key | after one relay pass the older is published and the newer still `PENDING`; on the topic, same partition, older offset first |
+| Kafka paused while an event is sent | the event goes `RETRY` (nothing lost), and is published once Kafka is back, by the same producer |
+| Kafka paused for longer than the attempt budget while an order fails, the order then corrected | the failed event is never `DEAD`; it is published first and `OrderSynced` last, matching the order's real state |
+| `kafka` breaker forced open | the event is postponed with 0 attempts used; published after the breaker closes |
+| A `DEAD` event, then a newer event of the same order | the newer one stays `PENDING` and the blocked-keys gauge is 1; after the replay, `OrderFailed` (sequence 1) is published before `OrderSynced` (sequence 2), and the gauge is back to 0 |
+| A `DEAD` event of order 1001, then a stock change of the SKU "1001" | the SKU's event is published (different key); with both `DEAD`, the blocked-keys gauge is 2 |
+| Kafka rejects the event (record larger than `max.request.size`) | `DEAD` at the first attempt; `last_error` names `RecordTooLargeException`, not the client's "Send failed" wrapper |
+| Four transactions write an event of one SKU at the same moment | sequences 1, 2, 3, 4 in outbox (publication) order |
+| Writing the event fails | the `DONE` is rolled back with it (job still `IN_PROGRESS`, no event); once fixed, `DONE` and its event are stored together |
+| A worker's lease expires while the ERP answers slowly, and another worker takes the job | one `DONE`, one `OrderSynced`: the late result is discarded and writes no second event |
 
 Pure logic (money parsing, the order transformer, backoff, HMAC) has plain unit tests. Every test has a comment
 naming the code change that would make it fail, and each of those changes was made by hand to confirm the test
@@ -363,23 +465,25 @@ really does fail.
 
 ## Quality gates
 
-Three checks on top of the tests, with figures from a local run on 2026-10-14
-([report](docs/quality/20261014-quality.md), with the raw JaCoCo CSV and PIT XML next to it):
+Three checks on top of the tests, with figures from a local run on 2026-10-15
+([report](docs/quality/20261015-h6r3-quality.md), with the raw JaCoCo CSV and PIT XML next to it; the
+[first report](docs/quality/20261014-quality.md) explains the method and the mutants found):
 
 - **Architecture rules** (ArchUnit, part of `./gradlew build`; all 6 pass):
   - the order mapping (`transform`) is plain Java: no Spring, JPA, `java.net`, queue or ERP-client code in it;
   - controllers never touch the database: no repositories, and no JDBC, JPA or `DataSource` either;
   - no dependency cycles between packages;
-  - money is `long` cents: no `double`, `float`, `BigDecimal` or `NumberFormat` where orders are read, mapped or
-    sent to the ERP (fields, signatures, generics and calls are checked). Not visible to the rule: a local `double`
+  - money is `long` cents: no `double`, `float`, `BigDecimal` or `NumberFormat` where orders are read, mapped,
+    sent to the ERP or published as events (fields, signatures, generics and calls are checked). Not visible to the rule: a local `double`
     that goes through no call, and floating point hidden inside some other library's `String` to `long` method;
   - no field injection (`@Autowired`, `@Value`, `@Inject` or `@Resource` on fields) and no sleeping thread
     (`Thread.sleep`, `TimeUnit.sleep`, `LockSupport.park*`) in production code.
 
   Each rule was broken once by hand to confirm that it fails.
-- **Coverage** (JaCoCo, the whole suite including the integration tests, no exclusions): 89.22% of lines
-  (1027 of 1151) and 82.31% of branches (242 of 294); another run of the same code covered 1029 lines, because two
-  timing-dependent paths in the metrics code are not always run. `./gradlew build` fails below 80% of lines.
+- **Coverage** (JaCoCo, the whole suite including the integration tests, no exclusions): 90.38% of lines
+  (1203 of 1331) and 82.30% of branches (279 of 339). Two runs of the same code can differ by about two lines,
+  because two timing-dependent paths in the metrics code are not always run. `./gradlew build` fails below 90% of
+  lines (the measured value rounded down to the ten).
 - **Mutation testing** (PIT, on the pure logic: money parsing, the order transformer, backoff, HMAC; against their
   unit tests): 79 of 79 mutants killed, 100%. The first run killed 66 of 79 (83.5%). Every survivor pointed at a
   missing test (for example, no unit test reached six of the order validations, and a cap that is not a multiple
@@ -398,9 +502,10 @@ Three checks on top of the tests, with figures from a local run on 2026-10-14
 - [ADR 0003: Persistent retries vs. in-memory, and the circuit breaker](docs/adr/0003-persistent-retries-vs-in-memory-and-circuit-breaker.md)
 - [ADR 0004: Transactional outbox for the stock sync](docs/adr/0004-transactional-outbox-for-stock-sync.md)
 - [ADR 0005: Observability](docs/adr/0005-observability.md)
+- [ADR 0006: Domain events to Kafka through the outbox](docs/adr/0006-domain-events-to-kafka-via-outbox.md)
 
 ## Stack
 
 Java 25, Spring Boot 4.1 (Web MVC, Data JPA + JdbcClient, Security, Validation, Actuator), PostgreSQL 17 with Flyway,
-Resilience4j, Micrometer + Prometheus + Grafana, springdoc-openapi, JUnit 6, AssertJ, Testcontainers, WireMock,
+Resilience4j, Apache Kafka (Spring for Apache Kafka), Micrometer + Prometheus + Grafana, springdoc-openapi, JUnit 6, AssertJ, Testcontainers, WireMock,
 Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Kotlin DSL).

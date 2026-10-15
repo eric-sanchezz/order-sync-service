@@ -72,7 +72,7 @@ Destinations are pluggable (`OutboxDispatcher`); today there is only the shop's 
 
 ### Order per key (head-of-line)
 
-A message is only claimed if no **older** message (lower id) with the same `(aggregate_id, destination)` is still
+A message is only claimed if no **older** message (lower id) with the same `(aggregate_type, aggregate_id, destination)` is still
 `PENDING`, `RETRY` or `IN_PROGRESS`. This is a `NOT EXISTS` in the claim. Only the oldest active message of a key
 passes it, so a batch never holds two messages of one key. That avoids sending 80 and then 100 in parallel and
 letting the network decide which arrives last.

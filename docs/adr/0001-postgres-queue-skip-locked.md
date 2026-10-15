@@ -48,3 +48,18 @@ RETURNING ...
   hit this; the ERP's `Idempotency-Key` (ADR 0002) covers it.
 - The test suite checks this with two workers polling at the same moment while another transaction holds the oldest
   rows locked. Without `SKIP LOCKED`, both workers wait for those rows and then both send them.
+
+## Update (2026-10-14): Kafka is now in the stack, and the queue stays here
+
+Kafka was added to publish domain events (ADR 0006). The work queue was not moved to it, because what a job needs
+is still what a table gives and a log does not:
+- **Per-message retries with their own schedule.** A job waits in `RETRY` until `next_attempt_at` while the jobs
+  behind it carry on. A Kafka partition is consumed in order: a message that has to wait 30 s either blocks its
+  partition or has to be copied to retry topics.
+- **Replay and inspection** are an `UPDATE` and a `SELECT`. In Kafka, "show me the failed orders of customer 42 and
+  send them again" means another store next to it.
+- **State you can query.** The admin API, the stats and the Prometheus gauges are queries on `sync_job`.
+- **No extra infrastructure** on the order path: the webhook writes the inbox and the job in one local transaction.
+
+So Postgres keeps the work ("this order still has to reach the ERP") and Kafka carries facts ("this order reached
+the ERP"), written to the outbox in the same transaction as the state change they describe.
