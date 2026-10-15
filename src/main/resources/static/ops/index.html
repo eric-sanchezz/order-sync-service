@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Order sync - operator</title>
+<link rel="stylesheet" href="ops.css">
+<script src="ops.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>Order sync - operator</h1>
+  <form id="key-form" autocomplete="off">
+    <label for="api-key">X-API-Key</label>
+    <input id="api-key" name="api-key" type="password" autocomplete="off" spellcheck="false">
+    <button id="use-key" type="submit">Use key</button>
+    <button id="forget-key" type="button">Forget key</button>
+    <span id="key-state" class="key-state">No key set</span>
+    <button id="refresh" type="button">Refresh</button>
+  </form>
+  <p id="message" class="message" role="status" hidden></p>
+</header>
+
+<main>
+  <section>
+    <h2>Stats</h2>
+    <div id="stats" class="stats"><span class="muted">Set a key and press Refresh.</span></div>
+  </section>
+
+  <section>
+    <h2>Jobs</h2>
+    <div class="toolbar">
+      <label for="jobs-filter">Status</label>
+      <select id="jobs-filter">
+        <option value="">All</option>
+        <option>PENDING</option>
+        <option>IN_PROGRESS</option>
+        <option>RETRY</option>
+        <option>DONE</option>
+        <option>DEAD</option>
+      </select>
+      <button id="jobs-prev" type="button" disabled>Prev</button>
+      <span id="jobs-page" class="muted"></span>
+      <button id="jobs-next" type="button" disabled>Next</button>
+    </div>
+    <div class="split">
+      <table id="jobs-table">
+        <thead>
+          <tr><th>ID</th><th>Event ID</th><th>Status</th><th>Attempts</th><th>ERP order</th><th>Last error</th><th>Created</th><th>Completed</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="detail">
+        <div class="detail-head">
+          <h3>Job detail</h3>
+          <button id="job-replay" type="button" class="replay" hidden>Replay</button>
+        </div>
+        <div id="job-detail"><span class="muted">Pick a job by its ID.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Outbox</h2>
+    <div class="toolbar">
+      <label for="outbox-filter">Status</label>
+      <select id="outbox-filter">
+        <option value="">All</option>
+        <option>PENDING</option>
+        <option>IN_PROGRESS</option>
+        <option>RETRY</option>
+        <option>DELIVERED</option>
+        <option>DEAD</option>
+        <option>SUPERSEDED</option>
+      </select>
+      <button id="outbox-prev" type="button" disabled>Prev</button>
+      <span id="outbox-page" class="muted"></span>
+      <button id="outbox-next" type="button" disabled>Next</button>
+    </div>
+    <div class="split">
+      <table id="outbox-table">
+        <thead>
+          <tr><th>ID</th><th>Destination</th><th>Aggregate</th><th>Event type</th><th>Status</th><th>Attempts</th><th>Last error</th><th>Created</th><th>Delivered</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="detail">
+        <div class="detail-head">
+          <h3>Message detail</h3>
+          <button id="outbox-replay" type="button" class="replay" hidden>Replay</button>
+        </div>
+        <div id="outbox-detail"><span class="muted">Pick a message by its ID.</span></div>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,46 @@
+/* Operator page: plain, readable, one colour per status. No inline styles anywhere (the CSP forbids them). */
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1f2328; background: #f6f8fa; }
+header { background: #fff; border-bottom: 1px solid #d0d7de; padding: 12px 24px; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+h3 { font-size: 14px; margin: 0; }
+main { padding: 12px 24px 24px; }
+section { background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
+form, .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toolbar { margin-bottom: 8px; }
+input, select, button { font: inherit; padding: 3px 8px; }
+button { cursor: pointer; border: 1px solid #d0d7de; border-radius: 4px; background: #f6f8fa; }
+button:disabled { cursor: default; opacity: .5; }
+.key-state { font-weight: 600; }
+.muted { color: #656d76; }
+.message { margin: 8px 0 0; padding: 6px 10px; border-radius: 4px; background: #fff8c5; border: 1px solid #d4a72c; }
+.message.error { background: #ffebe9; border-color: #ff8182; }
+.stats { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.stat { display: inline-flex; gap: 6px; align-items: center; }
+.stat .count { font-weight: 700; }
+.split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+/* Short values stay on one line; free-length ones (ids, errors) break anywhere and dates at the space, so the table
+   can shrink to its grid column instead of running over the detail panel on laptop widths. */
+th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #eaeef2; white-space: nowrap; }
+th, td.time { white-space: normal; }
+td.time span { white-space: nowrap; }
+td.long, td.error-cell { white-space: normal; overflow-wrap: anywhere; }
+td.error-cell { color: #9a6700; }
+tr.selected td { background: #ddf4ff; }
+button.link { border: none; background: none; color: #0969da; padding: 0; text-decoration: underline; }
+.detail { border-left: 1px solid #d0d7de; padding-left: 16px; }
+.detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.replay { background: #cf222e; color: #fff; border-color: #a40e26; }
+dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0 0 8px; font-size: 13px; }
+dt { color: #656d76; }
+dd { margin: 0; overflow-wrap: anywhere; }
+pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px; padding: 8px; margin: 0; font-size: 12px; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.status { display: inline-block; padding: 0 6px; border-radius: 10px; font-size: 12px; font-weight: 600; color: #fff; background: #656d76; }
+.status-PENDING { background: #8250df; }
+.status-IN_PROGRESS { background: #0969da; }
+.status-RETRY { background: #bc4c00; }
+.status-DONE, .status-DELIVERED { background: #1a7f37; }
+.status-DEAD { background: #cf222e; }
+.status-SUPERSEDED { background: #6e7781; }
