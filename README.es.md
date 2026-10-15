@@ -1,5 +1,7 @@
 # order-sync-service
 
+**Servicio de integración tienda ↔ ERP en Java 25 y Spring Boot 4: ningún pedido perdido ni duplicado, aunque el ERP esté caído**
+
 [![CI](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml/badge.svg)](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml)
 [![Line coverage](https://img.shields.io/badge/line%20coverage-90.44%25-brightgreen)](docs/quality/20261015-h7-quality.md)
 [![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h7-quality.md)
@@ -27,11 +29,6 @@ te da) es código explícito con un test detrás. Todos los datos (clientes, art
 | **Barreras de calidad** | 90,4 % de cobertura de líneas, 79 de 79 mutantes eliminados en la lógica pura (PIT), 6 reglas de arquitectura (ArchUnit), todo ejecutado por el CI en GitHub Actions |
 | **Pruébalo** | `docker compose up --build -d` lo arranca todo: el servicio, Postgres, Kafka, Prometheus, Grafana y la tienda y el ERP simulados ([arrancarlo](#arrancarlo)) |
 
-![Dashboard de Grafana de order-sync-service durante una ejecución de demo con Kafka caído 70 s](docs/images/grafana-dashboard.png)
-
-*El dashboard de Grafana provisionado durante una ejecución de demo en la que se pausó Kafka 70 s; detalles en
-[Observabilidad](#observabilidad).*
-
 ### Qué demuestra
 
 - **Backend en Java 25 y Spring Boot 4**: webhooks verificados con HMAC, una API REST de administración (con API key) y
@@ -46,6 +43,11 @@ te da) es código explícito con un test detrás. Todos los datos (clientes, art
 - **Tests y calidad**: tests de integración con Testcontainers, una prueba de carga con una caída del ERP provocada
   (k6), mutation testing, reglas de arquitectura y un pipeline de CI.
 - **Decisiones por escrito**: seis [registros de decisiones de arquitectura](#decisiones-de-diseño).
+
+![Dashboard de Grafana de order-sync-service durante una ejecución de demo con Kafka caído 70 s](docs/images/grafana-dashboard.png)
+
+*El dashboard de Grafana provisionado durante una ejecución de demo en la que se pausó Kafka 70 s; detalles en
+[Observabilidad](#observabilidad).*
 
 ### Contenido
 
@@ -622,5 +624,5 @@ AssertJ, Testcontainers, WireMock, Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Ko
 
 ## Autor
 
-Eric Sánchez, desarrollador backend y de integraciones (Java, Kotlin, Python, SQL). GitHub:
-[eric-sanchezz](https://github.com/eric-sanchezz).
+Eric Sánchez, desarrollador backend y de integraciones (Java, Kotlin, Python, SQL). [LinkedIn](https://www.linkedin.com/in/ericsanchezdev/) ·
+[GitHub](https://github.com/eric-sanchezz).

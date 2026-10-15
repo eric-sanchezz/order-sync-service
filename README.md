@@ -1,5 +1,7 @@
 # order-sync-service
 
+**Shop ↔ ERP integration service in Java 25 and Spring Boot 4: no order lost or duplicated, even with the ERP down**
+
 [![CI](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml/badge.svg)](https://github.com/eric-sanchezz/order-sync-service/actions/workflows/ci.yml)
 [![Line coverage](https://img.shields.io/badge/line%20coverage-90.44%25-brightgreen)](docs/quality/20261015-h7-quality.md)
 [![Mutation score](https://img.shields.io/badge/mutation%20score%20%28pure%20logic%29-79%2F79%20killed-brightgreen)](docs/quality/20261015-h7-quality.md)
@@ -26,11 +28,6 @@ explicit code with a test behind it. All data (customers, articles, orders) is i
 | **Quality gates** | 90.4% line coverage, 79 of 79 mutants killed on the pure logic (PIT), 6 architecture rules (ArchUnit), all run by CI on GitHub Actions |
 | **Try it** | `docker compose up --build -d` starts everything: the service, Postgres, Kafka, Prometheus, Grafana and the mocked shop and ERP ([run it](#run-it)) |
 
-![Grafana dashboard of order-sync-service during a demo run with a 70 s Kafka outage](docs/images/grafana-dashboard.png)
-
-*The provisioned Grafana dashboard during a demo run in which Kafka was paused for 70 s; details in
-[Observability](#observability).*
-
 ### What it demonstrates
 
 - **Backend in Java 25 and Spring Boot 4**: webhook endpoints verified with HMAC, an admin REST API (API key) with an
@@ -45,6 +42,11 @@ explicit code with a test behind it. All data (customers, articles, orders) is i
 - **Testing and quality**: Testcontainers integration tests, a load test with an injected ERP outage (k6), mutation
   testing, architecture rules and a CI pipeline.
 - **Decisions written down**: six [architecture decision records](#design-decisions).
+
+![Grafana dashboard of order-sync-service during a demo run with a 70 s Kafka outage](docs/images/grafana-dashboard.png)
+
+*The provisioned Grafana dashboard during a demo run in which Kafka was paused for 70 s; details in
+[Observability](#observability).*
 
 ### Contents
 
@@ -593,5 +595,5 @@ Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Kotlin DSL).
 
 ## Author
 
-Eric Sánchez, backend and integrations developer (Java, Kotlin, Python, SQL). GitHub:
-[eric-sanchezz](https://github.com/eric-sanchezz).
+Eric Sánchez, backend and integrations developer (Java, Kotlin, Python, SQL). [LinkedIn](https://www.linkedin.com/in/ericsanchezdev/) ·
+[GitHub](https://github.com/eric-sanchezz).
