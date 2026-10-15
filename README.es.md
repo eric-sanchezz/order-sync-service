@@ -51,12 +51,12 @@ te da) es código explícito con un test detrás. Todos los datos (clientes, art
 
 ### Contenido
 
-[El problema](#el-problema) · [Cómo funciona](#cómo-funciona) · [Arrancarlo](#arrancarlo) · [Pruébalo](#pruébalo) ·
+[El reto](#el-reto) · [Cómo funciona](#cómo-funciona) · [Arrancarlo](#arrancarlo) · [Pruébalo](#pruébalo) ·
 [Página de operador](#página-de-operador) · [Observabilidad](#observabilidad) · [Resiliencia ante fallos](#resiliencia-ante-fallos) ·
 [n8n frente a este código](#lo-que-n8n-te-da-gratis-frente-a-lo-que-hace-este-código) · [Tests](#tests) ·
 [Barreras de calidad](#barreras-de-calidad) · [Decisiones de diseño](#decisiones-de-diseño) · [Stack](#stack) · [Autor](#autor)
 
-## El problema
+## El reto
 
 La tienda envía un webhook por cada pedido nuevo, y el ERP tiene su propia API y su propio modelo de datos. Entre los
 dos:

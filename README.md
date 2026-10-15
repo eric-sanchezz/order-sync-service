@@ -50,12 +50,12 @@ explicit code with a test behind it. All data (customers, articles, orders) is i
 
 ### Contents
 
-[The problem](#the-problem) · [How it works](#how-it-works) · [Run it](#run-it) · [Try it](#try-it) ·
+[The challenge](#the-challenge) · [How it works](#how-it-works) · [Run it](#run-it) · [Try it](#try-it) ·
 [Operator page](#operator-page) · [Observability](#observability) · [Resilience under failure](#resilience-under-failure) ·
 [n8n vs. this code](#what-n8n-gives-you-for-free-vs-what-this-code-does) · [Testing](#testing) ·
 [Quality gates](#quality-gates) · [Design decisions](#design-decisions) · [Stack](#stack) · [Author](#author)
 
-## The problem
+## The challenge
 
 The shop sends a webhook for every new order, and the ERP has its own API and data model. Between the two:
 
