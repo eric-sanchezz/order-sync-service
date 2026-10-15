@@ -18,12 +18,17 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.TestPropertySource;
 
 /**
  * The ERP accepts the order, and the DONE write hits a one-off database error (here: the statement is cancelled
  * while it waits for a row lock). That is a transient failure, not a value that can never be stored, so the job must
  * not be written off as DEAD.
+ * <p>
+ * The ERP answers after 2 s (with a 10 s client timeout) so the row lock is always taken before the DONE write, even
+ * on a slow CI runner.
  */
+@TestPropertySource(properties = "ordersync.erp.timeout=10s")
 class TransientResultWriteErrorTest extends IntegrationTest {
 
 	private static final String ORDER = """
@@ -44,7 +49,7 @@ class TransientResultWriteErrorTest extends IntegrationTest {
 	void cancelledDoneWriteAfterAnErpSuccessDoesNotSendTheJobDead() throws Exception {
 		this.erp.register(post(urlEqualTo(SALES_ORDERS)).willReturn(aResponse().withStatus(201)
 			.withBody("{\"orderId\":\"ERP-T\"}")
-			.withFixedDelay(300)));
+			.withFixedDelay(2000)));
 		long jobId = this.json.readTree(postSignedOrder("evt-transient", ORDER).getBody()).get("jobId").asLong();
 
 		CompletableFuture<Void> poll = CompletableFuture.runAsync(this.worker::pollOnce);
