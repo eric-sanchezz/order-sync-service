@@ -595,5 +595,5 @@ Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Kotlin DSL).
 
 ## Author
 
-Eric Sánchez, backend and integrations developer (Java, Kotlin, Python, SQL). [LinkedIn](https://www.linkedin.com/in/ericsanchezdev/) ·
+Eric Sánchez · [LinkedIn](https://www.linkedin.com/in/ericsanchezdev/) ·
 [GitHub](https://github.com/eric-sanchezz).

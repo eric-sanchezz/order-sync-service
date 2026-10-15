@@ -624,5 +624,5 @@ AssertJ, Testcontainers, WireMock, Awaitility, ArchUnit, JaCoCo, PIT. Gradle (Ko
 
 ## Autor
 
-Eric Sánchez, desarrollador backend y de integraciones (Java, Kotlin, Python, SQL). [LinkedIn](https://www.linkedin.com/in/ericsanchezdev/) ·
+Eric Sánchez · [LinkedIn](https://www.linkedin.com/in/ericsanchezdev/) ·
 [GitHub](https://github.com/eric-sanchezz).
