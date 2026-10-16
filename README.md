@@ -15,7 +15,7 @@ without losing or duplicating anything, even when the other side is slow, down, 
 (order synced, order failed, stock updated) is published to Kafka as domain events, through the same outbox.
 
 In my day job I build this kind of integration (an ERP and a B2B web shop talking over REST and webhooks) with n8n.
-Here it is written by hand in Java 25 and Spring Boot 4.1, so every guarantee n8n gives you (and a few it doesn't) is
+Here it is written in plain Java 25 and Spring Boot 4.1 code, so every guarantee n8n gives you (and a few it doesn't) is
 explicit code with a test behind it. All data (customers, articles, orders) is invented.
 
 ## At a glance

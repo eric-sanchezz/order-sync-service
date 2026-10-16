@@ -16,7 +16,7 @@ sin perder ni duplicar nada, aunque el otro lado vaya lento, esté caído o rech
 mismo outbox.
 
 En mi trabajo monto este tipo de integración (un ERP y una tienda online B2B que se hablan por REST y webhooks) con
-n8n. Aquí está escrita a mano en Java 25 y Spring Boot 4.1, de modo que cada garantía que te da n8n (y algunas que no
+n8n. Aquí está escrita en código Java 25 y Spring Boot 4.1, de modo que cada garantía que te da n8n (y algunas que no
 te da) es código explícito con un test detrás. Todos los datos (clientes, artículos, pedidos) son inventados.
 
 ## De un vistazo
